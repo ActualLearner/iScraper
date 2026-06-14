@@ -68,6 +68,12 @@ BETA_MAX_USERS = _int("BETA_MAX_USERS", 5)
 MAX_MATCH_PROFILE_WORDS = _int("MAX_MATCH_PROFILE_WORDS", 35)
 MAX_SOURCE_CHANNELS = _int("MAX_SOURCE_CHANNELS", 30)
 
+# 0 means scrape until the lookback boundary. Set only as an emergency brake for
+# very large sources if a worker starts exceeding its timeout/budget.
+SCRAPE_MAX_MESSAGES = _int("SCRAPE_MAX_MESSAGES", 0)
+SCRAPE_PROGRESS_EVERY = _int("SCRAPE_PROGRESS_EVERY", 250)
+JOB_STALE_MINUTES = _int("JOB_STALE_MINUTES", 20)
+
 DEFAULT_LOOKBACK_DAYS = _int("DEFAULT_LOOKBACK_DAYS", 15)
 MAX_LOOKBACK_DAYS = _int("MAX_LOOKBACK_DAYS", 90)
 

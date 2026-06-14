@@ -5,6 +5,7 @@ so this module must only ever run server-side (webhook + worker), never client.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from functools import lru_cache
 from typing import Any
 
@@ -228,10 +229,11 @@ def update_job_progress(job_id: int, **progress: Any) -> None:
 
 
 def claim_pending_jobs(limit: int = 10) -> list[dict]:
-    """Atomically-ish claim pending jobs by flipping them to 'running'.
+    """Claim pending jobs and recover jobs abandoned by canceled workers.
 
-    At the v1 beta scale (<=5 users, one worker at a time) this is sufficient;
-    each claimed job is updated to 'running' before it is processed.
+    GitHub can cancel a run at the workflow timeout, which prevents the process
+    from marking its active job as error. A stale running job is safe to retry
+    because scraping is idempotent and unchanged posts are skipped.
     """
     pending = _rows(
         client()
@@ -242,8 +244,22 @@ def claim_pending_jobs(limit: int = 10) -> list[dict]:
         .limit(limit)
         .execute()
     )
+    stale_before = timeutil.iso(
+        timeutil.now_utc() - timedelta(minutes=config.JOB_STALE_MINUTES)
+    )
+    stale_running = _rows(
+        client()
+        .table("jobs")
+        .select("*")
+        .eq("status", "running")
+        .lt("started_at", stale_before)
+        .order("started_at")
+        .limit(max(limit - len(pending), 0))
+        .execute()
+    )
+
     claimed = []
-    for job in pending:
+    for job in pending + stale_running:
         mark_job_started(job["id"])
         claimed.append(job)
     return claimed
@@ -251,7 +267,12 @@ def claim_pending_jobs(limit: int = 10) -> list[dict]:
 
 def mark_job_started(job_id: int) -> None:
     client().table("jobs").update(
-        {"status": "running", "started_at": timeutil.now_iso()}
+        {
+            "status": "running",
+            "started_at": timeutil.now_iso(),
+            "finished_at": None,
+            "error": None,
+        }
     ).eq("id", job_id).execute()
 
 

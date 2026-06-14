@@ -91,6 +91,8 @@ The current beta uses threshold-only semantic matching. This keeps the system si
 - Near-Live is polling-based, not instant. The worker is scheduled through GitHub Actions, so runs may be delayed.
 - Public channels and public supergroups are supported. Private sources are not.
 - Past Search is queued. It is processed by the next worker run, not immediately by the webhook.
+- Scraping walks backward until the lookback boundary; `SCRAPE_MAX_MESSAGES` is an optional emergency cap and defaults to unlimited.
+- Jobs left `running` by canceled worker runs are retried after `JOB_STALE_MINUTES`.
 - OCR is English by default through Tesseract, configurable with `OCR_LANGS`.
 - The beta cap defaults to 5 users.
 - Live integration behavior depends on Telegram, Supabase, Gemini, Vercel, and GitHub Actions free-tier constraints.
