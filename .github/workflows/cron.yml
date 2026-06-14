@@ -4,12 +4,21 @@ name: iScraper worker
 # alerts, and drains queued Past Searches.
 #
 # NOTE: GitHub's cron granularity is 5 minutes and scheduled runs are best-effort
-# (they can be delayed, especially on the hour). That's why "near-live" means
-# "within a few minutes", and why the minimum near-live interval is 5 minutes.
+# (they can be delayed or dropped, especially at minute 0). The offset schedule
+# below avoids the busiest minute while still running roughly every 5 minutes.
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
   workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/cron.yml"
+      - "core/**"
+      - "jobs/**"
+      - "scraper/**"
+      - "scripts/**"
+      - "requirements-worker.txt"
 
 concurrency:
   group: iscraper-worker
