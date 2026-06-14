@@ -1,0 +1,11 @@
+# Worker (GitHub Actions) + local scripts dependencies.
+# Install this locally for running the worker, scripts/login_telethon.py, and
+# scripts/set_webhook.py:   pip install -r requirements-worker.txt
+
+telethon==1.36.0          # scraping public channels with a user account (MTProto)
+google-genai==1.2.0       # Gemini embeddings
+supabase==2.9.1           # Supabase Postgres client
+httpx==0.27.2             # Telegram Bot API calls
+python-dotenv==1.0.1      # load .env for local runs
+pytesseract==0.3.13       # offline OCR wrapper for image-based source posts
+Pillow==10.4.0            # image handling used by pytesseract

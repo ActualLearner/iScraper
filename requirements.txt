@@ -1,0 +1,7 @@
+# Vercel webhook dependencies (this is the file Vercel installs at build time).
+# Kept intentionally light so the serverless bundle stays small and cold starts
+# fast. The webhook only talks to the Bot API + Supabase; it never scrapes or
+# embeds. Heavy worker deps live in requirements-worker.txt.
+
+supabase==2.9.1
+httpx==0.27.2

@@ -1,0 +1,49 @@
+name: iScraper worker
+
+# Runs the scheduled worker: scrapes channels, delivers due interval/near-live
+# alerts, and drains queued Past Searches.
+#
+# NOTE: GitHub's cron granularity is 5 minutes and scheduled runs are best-effort
+# (they can be delayed, especially on the hour). That's why "near-live" means
+# "within a few minutes", and why the minimum near-live interval is 5 minutes.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
+
+concurrency:
+  group: iscraper-worker
+  cancel-in-progress: false   # never run two workers at once
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install OCR system package
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+
+      - run: pip install -r requirements-worker.txt
+
+      - name: Run worker
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELETHON_SESSION: ${{ secrets.TELETHON_SESSION }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Optional tunables (uncomment in repo secrets/vars to override defaults):
+          # SIMILARITY_THRESHOLD: ${{ vars.SIMILARITY_THRESHOLD }}
+          # OCR_LANGS: ${{ vars.OCR_LANGS }}
+        run: python -m scraper.runner
