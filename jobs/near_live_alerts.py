@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from telethon import TelegramClient
 
-from core import db, embeddings, telegram_api, timeutil
+from core import db, embeddings, logs, telegram_api, timeutil
 from jobs import common
 
 
@@ -38,7 +38,7 @@ async def run_due(client: TelegramClient) -> None:
 
 
 async def _run(client: TelegramClient, user: dict) -> None:
-    from scraper.scrape import scrape_user_channels
+    from scraper.scrape import embed_pending_posts, scrape_user_channels
 
     user_id = user["id"]
     profile = common.resolve_alert_profile(user)
@@ -55,6 +55,15 @@ async def _run(client: TelegramClient, user: dict) -> None:
     # Scrape posts observed since the last check (bounded by the enable time).
     scrape_boundary = max(started, last_checked - timedelta(minutes=2))
     await scrape_user_channels(client, channels, scrape_boundary)
+    stats = await embed_pending_posts(channels, timeutil.iso(scrape_boundary))
+    if stats.get("quota_exhausted") or int(stats.get("remaining") or 0) > 0:
+        logs.info(
+            "near_live.deferred",
+            user_id=user_id,
+            quota_exhausted=stats.get("quota_exhausted"),
+            embedding_backlog=stats.get("remaining"),
+        )
+        return
 
     query_vec = embeddings.embed_query(profile)
     results = db.match_source_posts(

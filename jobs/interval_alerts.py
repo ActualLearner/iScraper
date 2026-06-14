@@ -10,9 +10,9 @@ from datetime import timedelta
 
 from telethon import TelegramClient
 
-from core import db, embeddings, telegram_api, timeutil
+from core import db, embeddings, logs, telegram_api, timeutil
 from jobs import common
-from scraper.scrape import scrape_user_channels
+from scraper.scrape import embed_pending_posts, scrape_user_channels
 
 # How wide a window after the configured delivery time still counts as "due",
 # to tolerate the worker's coarse, jittery schedule.
@@ -63,6 +63,15 @@ async def _run(client: TelegramClient, user: dict) -> None:
         timeutil.now_utc() - timedelta(days=user["alert_interval_days"])
     )
     await scrape_user_channels(client, channels, last)
+    stats = await embed_pending_posts(channels, timeutil.iso(last))
+    if stats.get("quota_exhausted") or int(stats.get("remaining") or 0) > 0:
+        logs.info(
+            "interval.deferred",
+            user_id=user_id,
+            quota_exhausted=stats.get("quota_exhausted"),
+            embedding_backlog=stats.get("remaining"),
+        )
+        return
 
     query_vec = embeddings.embed_query(profile)
     results = db.match_source_posts(

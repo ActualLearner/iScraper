@@ -90,8 +90,10 @@ The current beta uses threshold-only semantic matching. This keeps the system si
 
 - Near-Live is polling-based, not instant. The worker is scheduled through GitHub Actions, so runs may be delayed.
 - Public channels and public supergroups are supported. Private sources are not.
-- Past Search is queued. It is processed by the next worker run, not immediately by the webhook.
+- Past Search is queued. It is processed by worker runs, not immediately by the webhook.
+- Large Past Searches may take multiple worker runs while posts are indexed under Gemini quota limits.
 - Scraping walks backward until the lookback boundary; `SCRAPE_MAX_MESSAGES` is an optional emergency cap and defaults to unlimited.
+- Post embedding is paced by `EMBEDDING_REQUESTS_PER_MINUTE` and capped per run by `EMBEDDING_MAX_PER_RUN`.
 - Jobs left `running` by canceled worker runs are retried after `JOB_STALE_MINUTES`.
 - OCR is English by default through Tesseract, configurable with `OCR_LANGS`.
 - The beta cap defaults to 5 users.
@@ -144,6 +146,21 @@ SUPABASE_URL
 SUPABASE_SERVICE_KEY
 GEMINI_API_KEY
 ```
+
+Useful optional GitHub Actions variables:
+
+```text
+SIMILARITY_THRESHOLD
+SCRAPE_MAX_MESSAGES
+SCRAPE_PROGRESS_EVERY
+EMBEDDING_REQUESTS_PER_MINUTE
+EMBEDDING_MAX_PER_RUN
+EMBEDDING_QUOTA_RETRY_MINUTES
+OCR_LANGS
+OCR_TIMEOUT_SECONDS
+```
+
+Check your project's Gemini quota in AI Studio, then set `EMBEDDING_REQUESTS_PER_MINUTE` at or below that RPM. The default is conservative so big Past Searches continue across runs instead of failing on a 429.
 
 The scraper should use a real Telegram user session for `TELETHON_SESSION`, not the bot token, because the worker needs to read public Telegram history with Telethon.
 

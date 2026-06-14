@@ -43,7 +43,13 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # Optional tunables (uncomment in repo secrets/vars to override defaults):
-          # SIMILARITY_THRESHOLD: ${{ vars.SIMILARITY_THRESHOLD }}
-          # OCR_LANGS: ${{ vars.OCR_LANGS }}
+          # Optional tunables (set as repository/environment Variables):
+          SIMILARITY_THRESHOLD: ${{ vars.SIMILARITY_THRESHOLD }}
+          SCRAPE_MAX_MESSAGES: ${{ vars.SCRAPE_MAX_MESSAGES }}
+          SCRAPE_PROGRESS_EVERY: ${{ vars.SCRAPE_PROGRESS_EVERY }}
+          EMBEDDING_REQUESTS_PER_MINUTE: ${{ vars.EMBEDDING_REQUESTS_PER_MINUTE }}
+          EMBEDDING_MAX_PER_RUN: ${{ vars.EMBEDDING_MAX_PER_RUN }}
+          EMBEDDING_QUOTA_RETRY_MINUTES: ${{ vars.EMBEDDING_QUOTA_RETRY_MINUTES }}
+          OCR_LANGS: ${{ vars.OCR_LANGS }}
+          OCR_TIMEOUT_SECONDS: ${{ vars.OCR_TIMEOUT_SECONDS }}
         run: python -m scraper.runner

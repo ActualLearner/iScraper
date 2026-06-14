@@ -9,9 +9,10 @@ older `task_type` field. `gemini-embedding-001` remains supported for overrides.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from functools import lru_cache
 
-from core import config
+from core import config, timeutil
 
 
 @lru_cache(maxsize=1)
@@ -95,3 +96,20 @@ def embed_query(text: str) -> list[float]:
     if _is_embedding_2():
         return _single(query)
     return _many_embedding_001([query], "RETRIEVAL_QUERY")[0]
+
+
+def is_quota_error(exc: Exception) -> bool:
+    """Return true for Gemini rate-limit/quota failures from SDK exceptions."""
+    text = f"{type(exc).__name__} {exc!r}".lower()
+    return (
+        "resource_exhausted" in text
+        or "429" in text
+        or "quota" in text
+        or "rate limit" in text
+    )
+
+
+def quota_retry_after_iso() -> str:
+    return timeutil.iso(
+        timeutil.now_utc() + timedelta(minutes=config.EMBEDDING_QUOTA_RETRY_MINUTES)
+    )

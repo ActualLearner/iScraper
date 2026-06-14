@@ -160,6 +160,50 @@ def update_post(post_id: int, **fields: Any) -> None:
     client().table("source_posts").update(fields).eq("id", post_id).execute()
 
 
+def _unembedded_query(channel_usernames: list[str], posted_after: str | None = None):
+    query = (
+        client()
+        .table("source_posts")
+        .select("id,channel_username,message_id,posted_at,normalized_content")
+        .in_("channel_username", channel_usernames)
+        .is_("embedding", "null")
+    )
+    if posted_after:
+        query = query.gte("posted_at", posted_after)
+    return query
+
+
+def list_unembedded_posts(
+    channel_usernames: list[str],
+    posted_after: str | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    if not channel_usernames:
+        return []
+    query = _unembedded_query(channel_usernames, posted_after).order("posted_at", desc=True)
+    if limit and limit > 0:
+        query = query.limit(limit)
+    return _rows(query.execute())
+
+
+def count_unembedded_posts(
+    channel_usernames: list[str], posted_after: str | None = None
+) -> int:
+    if not channel_usernames:
+        return 0
+    query = (
+        client()
+        .table("source_posts")
+        .select("id", count="exact")
+        .in_("channel_username", channel_usernames)
+        .is_("embedding", "null")
+    )
+    if posted_after:
+        query = query.gte("posted_at", posted_after)
+    resp = query.execute()
+    return resp.count or 0
+
+
 # --------------------------------------------------------------------------- #
 # Matches (near-live dedup + record keeping)
 # --------------------------------------------------------------------------- #
@@ -228,22 +272,37 @@ def update_job_progress(job_id: int, **progress: Any) -> None:
     client().table("jobs").update({"payload": payload}).eq("id", job_id).execute()
 
 
+def _job_ready_to_claim(job: dict) -> bool:
+    payload = job.get("payload") or {}
+    progress = payload.get("_progress") or {}
+    next_attempt = timeutil.parse(progress.get("next_attempt_after"))
+    return next_attempt is None or next_attempt <= timeutil.now_utc()
+
+
 def claim_pending_jobs(limit: int = 10) -> list[dict]:
     """Claim pending jobs and recover jobs abandoned by canceled workers.
 
     GitHub can cancel a run at the workflow timeout, which prevents the process
     from marking its active job as error. A stale running job is safe to retry
-    because scraping is idempotent and unchanged posts are skipped.
+    because scraping is idempotent and unchanged posts are skipped. Pending jobs
+    may also carry a retry timestamp when Gemini quota is temporarily exhausted.
     """
-    pending = _rows(
+    pending_rows = _rows(
         client()
         .table("jobs")
         .select("*")
         .eq("status", "pending")
         .order("created_at")
-        .limit(limit)
+        .limit(max(limit * 5, limit))
         .execute()
     )
+    pending: list[dict] = []
+    for job in pending_rows:
+        if _job_ready_to_claim(job):
+            pending.append(job)
+        if len(pending) >= limit:
+            break
+
     stale_before = timeutil.iso(
         timeutil.now_utc() - timedelta(minutes=config.JOB_STALE_MINUTES)
     )
@@ -274,6 +333,16 @@ def mark_job_started(job_id: int) -> None:
             "error": None,
         }
     ).eq("id", job_id).execute()
+
+
+def defer_job(job_id: int, error: str | None = None) -> None:
+    fields: dict[str, Any] = {
+        "status": "pending",
+        "started_at": None,
+        "finished_at": None,
+        "error": error[:2000] if error else None,
+    }
+    client().table("jobs").update(fields).eq("id", job_id).execute()
 
 
 def finish_job(job_id: int, status: str, error: str | None = None) -> None:

@@ -97,6 +97,116 @@ async def _build_source_post_base(username: str, messages: list[Any]) -> dict[st
     }
 
 
+async def embed_pending_posts(
+    channel_usernames: list[str],
+    posted_after: str | None = None,
+    *,
+    max_count: int | None = None,
+    job_id: int | None = None,
+) -> dict[str, object]:
+    """Fill missing source-post embeddings gradually.
+
+    Scraping stores posts first with `embedding = null`; this function turns that
+    durable backlog into vectors at a controlled pace so large Past Searches can
+    resume across worker runs when Gemini quota is tight.
+    """
+    if not channel_usernames:
+        return {"embedded": 0, "remaining": 0, "quota_exhausted": False}
+
+    limit_value = config.EMBEDDING_MAX_PER_RUN if max_count is None else max_count
+    limit = limit_value if limit_value and limit_value > 0 else None
+    remaining_before = db.count_unembedded_posts(channel_usernames, posted_after)
+    if remaining_before <= 0:
+        return {"embedded": 0, "remaining": 0, "quota_exhausted": False}
+
+    rows = db.list_unembedded_posts(channel_usernames, posted_after, limit=limit)
+    delay = 60.0 / config.EMBEDDING_REQUESTS_PER_MINUTE if config.EMBEDDING_REQUESTS_PER_MINUTE > 0 else 0.0
+    logs.info(
+        "embedding.backlog_start",
+        remaining=remaining_before,
+        selected=len(rows),
+        limit=limit or "none",
+        rpm=config.EMBEDDING_REQUESTS_PER_MINUTE or "unlimited",
+    )
+    if job_id is not None:
+        db.update_job_progress(
+            job_id,
+            stage="embedding_posts",
+            embedding_backlog=remaining_before,
+            embeddings_selected=len(rows),
+        )
+
+    embedded = 0
+    quota_exhausted = False
+    retry_after: str | None = None
+    for index, row in enumerate(rows, start=1):
+        try:
+            vector = embeddings.embed_document(row.get("normalized_content") or "")
+        except Exception as exc:
+            if embeddings.is_quota_error(exc):
+                quota_exhausted = True
+                retry_after = embeddings.quota_retry_after_iso()
+                logs.exception(
+                    "embedding.quota_exhausted",
+                    exc,
+                    post_id=row.get("id"),
+                    source=row.get("channel_username"),
+                    embedded=embedded,
+                    retry_after=retry_after,
+                )
+                break
+            logs.exception(
+                "embedding.post_failed",
+                exc,
+                post_id=row.get("id"),
+                source=row.get("channel_username"),
+            )
+            raise
+
+        db.update_post(row["id"], embedding=vector)
+        embedded += 1
+        if embedded == 1 or embedded % 10 == 0:
+            progress_remaining = max(remaining_before - embedded, 0)
+            logs.info(
+                "embedding.progress",
+                embedded=embedded,
+                remaining_estimate=progress_remaining,
+                source=row.get("channel_username"),
+                post_id=row.get("id"),
+            )
+            if job_id is not None:
+                db.update_job_progress(
+                    job_id,
+                    stage="embedding_posts",
+                    embedded_posts=embedded,
+                    embedding_backlog=progress_remaining,
+                    current_source=row.get("channel_username"),
+                )
+        if delay > 0 and index < len(rows):
+            await asyncio.sleep(delay)
+
+    remaining_after = db.count_unembedded_posts(channel_usernames, posted_after)
+    stats: dict[str, object] = {
+        "embedded": embedded,
+        "remaining": remaining_after,
+        "quota_exhausted": quota_exhausted,
+    }
+    if retry_after:
+        stats["retry_after"] = retry_after
+    logs.info("embedding.backlog_done", **stats)
+    if job_id is not None:
+        progress = {
+            "stage": "embedding_posts",
+            "embedded_posts": embedded,
+            "embedding_backlog": remaining_after,
+        }
+        if retry_after:
+            progress["next_attempt_after"] = retry_after
+            progress["message"] = "Gemini quota exhausted; waiting to retry."
+        db.update_job_progress(job_id, **progress)
+    return stats
+
+
 async def scrape_channel(
     client: TelegramClient,
     username: str,
@@ -110,8 +220,6 @@ async def scrape_channel(
     Returns the number of posts inserted or refreshed. Channels that can't be
     accessed are skipped (logged), so one bad channel never fails a whole run.
     """
-    embed_texts: list[str] = []
-    embed_targets: list[tuple[str, object]] = []  # ("insert", dict) | ("update", (id, fields))
     groups: dict[str, list[Any]] = {}
     cap = max_messages if max_messages is not None else config.SCRAPE_MAX_MESSAGES
     limit = cap if cap and cap > 0 else None
@@ -153,8 +261,10 @@ async def scrape_channel(
         logs.exception("scrape.channel_failed", exc, source=username)
         return 0
 
-    # Telegram access failures are source-local. Database and embedding errors
-    # below are allowed to propagate so GitHub marks the workflow failed.
+    # Telegram access failures are source-local. Database errors below are
+    # allowed to propagate so GitHub marks real worker failures as failed.
+    written = 0
+    write_failures = 0
     for messages in groups.values():
         base = await _build_source_post_base(username, messages)
         if not base["caption"] and base["image_count"] == 0:
@@ -182,73 +292,59 @@ async def scrape_channel(
         content = "\n\n".join(parts)
         normalized = normalize_content(content)
 
-        if existing is None:
-            row = {
-                "channel_username": base["channel_username"],
-                "message_id": base["message_id"],
-                "message_link": base["message_link"],
-                "album_grouped_id": base["album_grouped_id"],
-                "posted_at": base["posted_at"],
-                "edited_at": base["edited_at"],
-                "caption": base["caption"],
-                "image_text": image_text or None,
-                "image_count": base["image_count"],
-                "content": content,
-                "normalized_content": normalized,
-            }
-            embed_texts.append(normalized)
-            embed_targets.append(("insert", row))
-        else:
-            fields = {
-                "content": content,
-                "normalized_content": normalized,
-                "caption": base["caption"],
-                "image_text": image_text or None,
-                "image_count": base["image_count"],
-                "album_grouped_id": base["album_grouped_id"],
-                "posted_at": base["posted_at"],
-                "message_link": base["message_link"],
-                "edited_at": base["edited_at"],
-                "scraped_at": timeutil.now_iso(),
-            }
-            if existing["normalized_content"] != normalized:
-                embed_texts.append(normalized)
-                embed_targets.append(("update", (existing["id"], fields)))
+        try:
+            if existing is None:
+                db.insert_post(
+                    {
+                        "channel_username": base["channel_username"],
+                        "message_id": base["message_id"],
+                        "message_link": base["message_link"],
+                        "album_grouped_id": base["album_grouped_id"],
+                        "posted_at": base["posted_at"],
+                        "edited_at": base["edited_at"],
+                        "caption": base["caption"],
+                        "image_text": image_text or None,
+                        "image_count": base["image_count"],
+                        "content": content,
+                        "normalized_content": normalized,
+                        "embedding": None,
+                    }
+                )
+                written += 1
             else:
+                fields = {
+                    "content": content,
+                    "normalized_content": normalized,
+                    "caption": base["caption"],
+                    "image_text": image_text or None,
+                    "image_count": base["image_count"],
+                    "album_grouped_id": base["album_grouped_id"],
+                    "posted_at": base["posted_at"],
+                    "message_link": base["message_link"],
+                    "edited_at": base["edited_at"],
+                    "scraped_at": timeutil.now_iso(),
+                }
+                if existing["normalized_content"] != normalized:
+                    fields["embedding"] = None
                 db.update_post(existing["id"], **fields)
-        # else: unchanged -> skip re-embedding (cheap direct comparison)
+                written += 1
+        except Exception as exc:
+            write_failures += 1
+            logs.exception("scrape.write_failed", exc, source=username)
 
+    if write_failures:
+        raise RuntimeError(f"{write_failures} source post write(s) failed for @{username}")
+
+    backlog = db.count_unembedded_posts([username], timeutil.iso(boundary))
     logs.info(
-        "scrape.channel_collected",
+        "scrape.channel_done",
         source=username,
         messages_scanned=scanned,
         hit_boundary=hit_boundary,
         groups=len(groups),
-        embedding_candidates=len(embed_texts),
+        written=written,
+        embedding_backlog=backlog,
     )
-    if not embed_texts:
-        return 0
-
-    vectors = embeddings.embed_documents(embed_texts)
-
-    written = 0
-    write_failures = 0
-    for (kind, target), vector in zip(embed_targets, vectors):
-        try:
-            if kind == "insert":
-                target["embedding"] = vector
-                db.insert_post(target)
-            else:
-                post_id, fields = target
-                fields["embedding"] = vector
-                db.update_post(post_id, **fields)
-            written += 1
-        except Exception as exc:
-            write_failures += 1
-            logs.exception("scrape.write_failed", exc, source=username)
-    if write_failures:
-        raise RuntimeError(f"{write_failures} source post write(s) failed for @{username}")
-    logs.info("scrape.channel_done", source=username, written=written)
     return written
 
 

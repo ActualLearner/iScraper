@@ -546,6 +546,22 @@ def _show_search_status(chat_id: int, user_id: int) -> None:
         scraped = progress.get("posts_written")
         if scraped is not None:
             lines.append(f"New/updated posts: {scraped}")
+        scanned = progress.get("messages_scanned")
+        if scanned is not None:
+            lines.append(f"Messages scanned: {scanned}")
+        backlog = progress.get("embedding_backlog")
+        if backlog is not None:
+            lines.append(f"Posts left to index: {backlog}")
+        embedded = progress.get("embedded_posts")
+        if embedded is not None:
+            lines.append(f"Posts indexed this run: {embedded}")
+        if progress.get("next_attempt_after"):
+            lines.append(
+                "Retry after: "
+                + _friendly_job_time(progress.get("next_attempt_after"), timezone)
+            )
+        if progress.get("message"):
+            lines.append(f"Note: {progress.get('message')}")
         matches = progress.get("matches_found")
         if matches is not None:
             lines.append(f"Matches found: {matches}")

@@ -52,6 +52,12 @@ GEMINI_API_KEY = _get("GEMINI_API_KEY")
 # --- Embeddings ---
 EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "gemini-embedding-2")
 EMBEDDING_DIM = _int("EMBEDDING_DIM", 768)
+# Gemini's active RPM/RPD limits vary by project and are shown in AI Studio.
+# Keep worker calls paced and checkpointed so large Past Searches finish across
+# multiple runs instead of bursting hundreds of embedding requests at once.
+EMBEDDING_REQUESTS_PER_MINUTE = _int("EMBEDDING_REQUESTS_PER_MINUTE", 15)
+EMBEDDING_MAX_PER_RUN = _int("EMBEDDING_MAX_PER_RUN", 75)
+EMBEDDING_QUOTA_RETRY_MINUTES = _int("EMBEDDING_QUOTA_RETRY_MINUTES", 60)
 
 # --- Matching ---
 # Cosine similarity in [0, 1]; tune for the embedding model in use. The default
