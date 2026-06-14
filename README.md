@@ -156,7 +156,7 @@ jobs/                       Past Search, interval alerts, near-live alerts
 scripts/init_db.sql         Supabase schema
 scripts/login_telethon.py   one-time Telethon session generation
 scripts/set_webhook.py      webhook and Telegram command menu setup
-.github/workflows/cron.yml  scheduled worker
+.github/workflows/iscraper-worker.yml  scheduled worker
 ```
 
 ## Status

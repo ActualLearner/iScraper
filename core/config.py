@@ -50,7 +50,7 @@ SUPABASE_SERVICE_KEY = _get("SUPABASE_SERVICE_KEY")
 GEMINI_API_KEY = _get("GEMINI_API_KEY")
 
 # --- Embeddings ---
-EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "text-embedding-004")
+EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "gemini-embedding-2")
 EMBEDDING_DIM = _int("EMBEDDING_DIM", 768)
 
 # --- Matching ---

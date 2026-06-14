@@ -26,6 +26,7 @@ async def main() -> None:
     )
 
     logs.info("runner.start")
+    failed_stages: list[str] = []
     client = await telethon_client.connect()
     try:
         for label, coro in (
@@ -38,10 +39,13 @@ async def main() -> None:
                 await coro
                 logs.info("runner.stage_done", stage=label)
             except Exception as exc:
+                failed_stages.append(label)
                 logs.exception("runner.stage_failed", exc, stage=label)
     finally:
         await client.disconnect()
-        logs.info("runner.done")
+        logs.info("runner.done", failed_stages=failed_stages)
+    if failed_stages:
+        raise RuntimeError(f"Worker stage(s) failed: {failed_stages}")
 
 
 if __name__ == "__main__":

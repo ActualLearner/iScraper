@@ -16,6 +16,7 @@ from scraper.scrape import scrape_user_channels
 
 
 async def run_pending(client: TelegramClient) -> None:
+    failures: list[int] = []
     for job in db.claim_pending_jobs():
         if job.get("type") != "past_search":
             db.finish_job(job["id"], "done")
@@ -33,6 +34,9 @@ async def run_pending(client: TelegramClient) -> None:
                 job.get("user_id"),
                 f"Past Search #{job['id']} failed. Use /search_status for details.",
             )
+            failures.append(job["id"])
+    if failures:
+        raise RuntimeError(f"Past Search job(s) failed: {failures}")
 
 
 async def _run_one(client: TelegramClient, job: dict) -> str:
