@@ -68,7 +68,11 @@ CANNOT_REMOVE_LAST = (
     "That's your only source channel — add another before removing this one."
 )
 
-MAIN_MENU = "⚙️ <b>iScraper settings</b>\n\nWhat would you like to manage?"
+MAIN_MENU = (
+    "⚙️ <b>iScraper settings</b>\n\n"
+    "Configure your profile, sources, delivery, and timezone here. "
+    "Use the app drawer for Past Search, Search Status, and Alerts."
+)
 
 PROFILE_CHOICE = "Use your saved match profile, or enter a new one for this run?"
 

@@ -493,6 +493,15 @@ def _receive_default_lookback(chat_id, user_id, text) -> None:
     _enqueue_past_search(chat_id, user_id, days, saved)
 
 
+def _friendly_job_time(value: str | None, tz_name: str | None) -> str:
+    dt = timeutil.parse(value)
+    if not dt:
+        return "unknown"
+    zone_name = tz_name or config.DEFAULT_TIMEZONE
+    local = dt.astimezone(timeutil.get_zone(zone_name))
+    return local.strftime("%b %-d, %Y %H:%M") + f" ({zone_name})"
+
+
 def _enqueue_past_search(chat_id, user_id, lookback, profile_text) -> None:
     job = db.enqueue_job(user_id, "past_search", {"lookback_days": lookback, "match_profile": profile_text})
     job_id = (job or {}).get("id", "?")
@@ -510,6 +519,8 @@ def _show_search_status(chat_id: int, user_id: int) -> None:
 
     payload = job.get("payload") or {}
     progress = payload.get("_progress") or {}
+    user = db.get_user(user_id) or {}
+    timezone = user.get("timezone") or config.DEFAULT_TIMEZONE
     status = job.get("status", "unknown")
     lookback = payload.get("lookback_days", "?")
     lines = [
@@ -517,12 +528,12 @@ def _show_search_status(chat_id: int, user_id: int) -> None:
         "",
         f"Status: <b>{status}</b>",
         f"Lookback: {lookback} day(s)",
-        f"Created: {job.get('created_at') or 'unknown'}",
+        f"Created: {_friendly_job_time(job.get('created_at'), timezone)}",
     ]
     if job.get("started_at"):
-        lines.append(f"Started: {job.get('started_at')}")
+        lines.append(f"Started: {_friendly_job_time(job.get('started_at'), timezone)}")
     if job.get("finished_at"):
-        lines.append(f"Finished: {job.get('finished_at')}")
+        lines.append(f"Finished: {_friendly_job_time(job.get('finished_at'), timezone)}")
     if progress:
         stage = progress.get("stage")
         if stage:
@@ -539,7 +550,7 @@ def _show_search_status(chat_id: int, user_id: int) -> None:
         if matches is not None:
             lines.append(f"Matches found: {matches}")
         if progress.get("updated_at"):
-            lines.append(f"Updated: {progress.get('updated_at')}")
+            lines.append(f"Updated: {_friendly_job_time(progress.get('updated_at'), timezone)}")
     if job.get("error"):
         lines.extend(["", f"Error: <code>{job.get('error')}</code>"])
 
