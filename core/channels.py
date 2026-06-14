@@ -1,14 +1,14 @@
 """Source channel input parsing, normalization, and validation.
 
-Accepted input (per product-spec.md):
-  - @channelusername
-  - https://t.me/channelusername
+Accepted input:
+  - @publicusername
+  - https://t.me/publicusername
 
 Rejected:
   - Private invite links (https://t.me/+...  or  https://t.me/joinchat/...)
   - Bare usernames without '@'
   - Non-Telegram URLs
-  - Anything that is not an accessible public channel
+  - Anything that is not an accessible public channel or public supergroup
 """
 from __future__ import annotations
 
@@ -80,12 +80,12 @@ class ValidationResult:
 
 
 def validate_channel_input(token: str) -> ValidationResult:
-    """Parse, then confirm the channel is a public channel the bot can resolve.
+    """Parse, then confirm the source is a public chat the bot can resolve.
 
     Uses Bot API getChat as a synchronous, responsive proxy for "the scraper
-    account can access this public channel": a public channel resolvable by the
-    bot is also readable by a normal user account (the Telethon scraper). Groups,
-    supergroups, users, bots, and non-existent handles are rejected.
+    account can access this public chat": public channels and public
+    supergroups resolvable by the bot are readable by the Telethon scraper user.
+    Users, bots, private invite links, and non-existent handles are rejected.
     """
     parsed = parse_channel_input(token)
     if parsed.reason != PARSE_OK or not parsed.username:
@@ -94,8 +94,7 @@ def validate_channel_input(token: str) -> ValidationResult:
     chat = telegram_api.get_chat(f"@{parsed.username}")
     if chat is None:
         return ValidationResult(False, username=parsed.username, reason="inaccessible")
-    if chat.get("type") != "channel":
-        # Public groups resolve as 'supergroup'; only broadcast channels qualify.
+    if chat.get("type") not in ("channel", "supergroup"):
         return ValidationResult(False, username=parsed.username, reason="inaccessible")
     return ValidationResult(True, username=parsed.username)
 

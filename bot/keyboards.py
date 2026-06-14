@@ -23,7 +23,8 @@ def main_menu() -> dict:
     return _kb(
         [
             [("📝 Match profile", "menu:profile"), ("📡 Source channels", "menu:channels")],
-            [("🔍 Past Search", "menu:past"), ("🔔 Ongoing Alerts", "menu:alerts")],
+            [("🔍 Past Search", "menu:past"), ("📊 Search status", "past:status")],
+            [("🔔 Ongoing Alerts", "menu:alerts")],
             [("📬 Delivery destination", "menu:delivery"), ("🌍 Timezone", "menu:tz")],
         ]
     )

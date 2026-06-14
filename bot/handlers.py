@@ -27,7 +27,7 @@ import re
 
 from bot import copy, keyboards
 from core import channels as ch
-from core import config, db, telegram_api, text as textutil, timeutil
+from core import config, db, logs, telegram_api, text as textutil, timeutil
 
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
@@ -42,7 +42,21 @@ def handle_update(update: dict) -> None:
         elif "callback_query" in update:
             _handle_callback(update["callback_query"])
     except Exception as exc:  # never let the webhook 500 on a single bad update
-        print(f"[handlers] error: {exc!r}")
+        logs.exception("bot.handle_update_error", exc, update_id=update.get("update_id"))
+        chat_id = _chat_id_from_update(update)
+        if chat_id is not None:
+            telegram_api.send_message(
+                chat_id,
+                "Something went wrong while handling that. The error was logged; try /settings or /cancel.",
+            )
+
+
+def _chat_id_from_update(update: dict) -> int | None:
+    if "message" in update:
+        return update["message"].get("chat", {}).get("id")
+    if "callback_query" in update:
+        return update["callback_query"].get("message", {}).get("chat", {}).get("id")
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -102,6 +116,8 @@ def _handle_command(chat_id: int, user_id: int, text: str) -> None:
         )
     elif cmd == "/search_past":
         _start_past_search(chat_id, user_id)
+    elif cmd == "/search_status":
+        _show_search_status(chat_id, user_id)
     elif cmd == "/alerts":
         _show_alerts_menu(chat_id, user_id)
     elif cmd == "/help":
@@ -109,7 +125,7 @@ def _handle_command(chat_id: int, user_id: int, text: str) -> None:
     else:
         telegram_api.send_message(
             chat_id,
-            "Unknown command. Try /settings, /search_past, or /alerts.",
+            "Unknown command. Try /settings, /search_past, /search_status, or /alerts.",
         )
 
 
@@ -168,6 +184,8 @@ def _handle_callback(cq: dict) -> None:
         _show_channels_menu(chat_id, user_id)
     elif data_str == "menu:past":
         _show_past_menu(chat_id, user_id)
+    elif data_str == "past:status":
+        _show_search_status(chat_id, user_id)
     elif data_str == "menu:alerts":
         _show_alerts_menu(chat_id, user_id)
     elif data_str == "menu:delivery":
@@ -395,6 +413,7 @@ def _show_past_menu(chat_id: int, user_id: int) -> None:
     kb = {
         "inline_keyboard": [
             [{"text": "🔍 Run a Past Search", "callback_data": "past:run"}],
+            [{"text": "📊 Latest search status", "callback_data": "past:status"}],
             [{"text": f"🗓 Default lookback: {default}d — change", "callback_data": "past:setdefault"}],
             [{"text": "⬅️ Back", "callback_data": "menu:main"}],
         ]
@@ -475,10 +494,56 @@ def _receive_default_lookback(chat_id, user_id, text) -> None:
 
 
 def _enqueue_past_search(chat_id, user_id, lookback, profile_text) -> None:
-    db.enqueue_job(user_id, "past_search", {"lookback_days": lookback, "match_profile": profile_text})
+    job = db.enqueue_job(user_id, "past_search", {"lookback_days": lookback, "match_profile": profile_text})
+    job_id = (job or {}).get("id", "?")
     n = db.count_channels(user_id)
     db.clear_state(user_id)
-    telegram_api.send_message(chat_id, copy.PAST_SEARCH_QUEUED.format(days=lookback, n=n))
+    logs.info("past_search.enqueued", user_id=user_id, job_id=job_id, lookback_days=lookback, sources=n)
+    telegram_api.send_message(chat_id, copy.PAST_SEARCH_QUEUED.format(job_id=job_id, days=lookback, n=n))
+
+
+def _show_search_status(chat_id: int, user_id: int) -> None:
+    job = db.latest_job(user_id, "past_search")
+    if not job:
+        telegram_api.send_message(chat_id, "No Past Search jobs yet. Use /search_past to start one.")
+        return
+
+    payload = job.get("payload") or {}
+    progress = payload.get("_progress") or {}
+    status = job.get("status", "unknown")
+    lookback = payload.get("lookback_days", "?")
+    lines = [
+        f"📊 <b>Latest Past Search #{job.get('id')}</b>",
+        "",
+        f"Status: <b>{status}</b>",
+        f"Lookback: {lookback} day(s)",
+        f"Created: {job.get('created_at') or 'unknown'}",
+    ]
+    if job.get("started_at"):
+        lines.append(f"Started: {job.get('started_at')}")
+    if job.get("finished_at"):
+        lines.append(f"Finished: {job.get('finished_at')}")
+    if progress:
+        stage = progress.get("stage")
+        if stage:
+            lines.append(f"Stage: {stage}")
+        source = progress.get("current_source")
+        done = progress.get("sources_done")
+        total = progress.get("sources_total")
+        if source or total is not None:
+            lines.append(f"Sources: {done or 0}/{total or '?'}" + (f" (@{source})" if source else ""))
+        scraped = progress.get("posts_written")
+        if scraped is not None:
+            lines.append(f"New/updated posts: {scraped}")
+        matches = progress.get("matches_found")
+        if matches is not None:
+            lines.append(f"Matches found: {matches}")
+        if progress.get("updated_at"):
+            lines.append(f"Updated: {progress.get('updated_at')}")
+    if job.get("error"):
+        lines.extend(["", f"Error: <code>{job.get('error')}</code>"])
+
+    telegram_api.send_message(chat_id, "\n".join(lines))
 
 
 # --------------------------------------------------------------------------- #
@@ -716,6 +781,7 @@ _HELP = (
     "<b>iScraper</b> watches public Telegram channels and sends you matching posts.\n\n"
     "• /settings — manage your match profile, channels, alerts, delivery, timezone\n"
     "• /search_past — one-time search over recent posts\n"
+    "• /search_status — check the latest Past Search job\n"
     "• /alerts — set up ongoing alerts (every N days, or near-live every N minutes)\n"
     "• /cancel — stop the current step"
 )

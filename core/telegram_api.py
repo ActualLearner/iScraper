@@ -10,9 +10,19 @@ from typing import Any
 
 import httpx
 
-from core import config
+from core import config, logs
 
 _TIMEOUT = httpx.Timeout(20.0)
+
+BOT_COMMANDS = [
+    {"command": "start", "description": "Open iScraper"},
+    {"command": "settings", "description": "Manage profile, sources, alerts"},
+    {"command": "search_past", "description": "Run a one-time past search"},
+    {"command": "search_status", "description": "Check latest past search"},
+    {"command": "alerts", "description": "Set up ongoing alerts"},
+    {"command": "help", "description": "Show help"},
+    {"command": "cancel", "description": "Cancel the current step"},
+]
 
 
 def _base_url() -> str:
@@ -26,9 +36,17 @@ def _call(method: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     try:
         resp = httpx.post(f"{_base_url()}/{method}", json=payload, timeout=_TIMEOUT)
         data = resp.json()
-    except Exception:
+    except Exception as exc:
+        logs.exception("telegram_api.exception", exc, method=method)
         return None
     if not data.get("ok"):
+        logs.warning(
+            "telegram_api.error",
+            method=method,
+            status_code=resp.status_code,
+            description=data.get("description"),
+            error_code=data.get("error_code"),
+        )
         return None
     return data.get("result")
 
@@ -81,6 +99,16 @@ def answer_callback_query(callback_query_id: str, text: str | None = None) -> No
 def get_chat(chat: str | int) -> dict | None:
     """getChat for a public @username or chat id. None if not resolvable."""
     return _call("getChat", {"chat_id": chat})
+
+
+def set_my_commands() -> dict | None:
+    """Install Telegram's slash-command menu for the bot chat drawer."""
+    return _call("setMyCommands", {"commands": BOT_COMMANDS})
+
+
+def set_chat_menu_button() -> dict | None:
+    """Prefer Telegram's command menu button when the client supports it."""
+    return _call("setChatMenuButton", {"menu_button": {"type": "commands"}})
 
 
 def send_chunked(chat_id: int | str, lines_header: str, lines: list[str]) -> None:

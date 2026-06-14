@@ -204,6 +204,29 @@ def enqueue_job(user_id: int, type_: str, payload: dict) -> dict | None:
     )
 
 
+def latest_job(user_id: int, type_: str | None = None) -> dict | None:
+    query = client().table("jobs").select("*").eq("user_id", user_id)
+    if type_:
+        query = query.eq("type", type_)
+    return _one(query.order("created_at", desc=True).limit(1).execute())
+
+
+def get_job(job_id: int) -> dict | None:
+    return _one(client().table("jobs").select("*").eq("id", job_id).execute())
+
+
+def update_job_progress(job_id: int, **progress: Any) -> None:
+    job = get_job(job_id)
+    if not job:
+        return
+    payload = dict(job.get("payload") or {})
+    current = dict(payload.get("_progress") or {})
+    current.update(progress)
+    current["updated_at"] = timeutil.now_iso()
+    payload["_progress"] = current
+    client().table("jobs").update({"payload": payload}).eq("id", job_id).execute()
+
+
 def claim_pending_jobs(limit: int = 10) -> list[dict]:
     """Atomically-ish claim pending jobs by flipping them to 'running'.
 

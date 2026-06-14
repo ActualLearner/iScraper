@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from telethon import TelegramClient
 
-from core import config, db, embeddings, telegram_api, timeutil
+from core import config, db, embeddings, logs, telegram_api, timeutil
 from jobs import common
 from scraper.scrape import scrape_user_channels
 
@@ -21,14 +21,21 @@ async def run_pending(client: TelegramClient) -> None:
             db.finish_job(job["id"], "done")
             continue
         try:
-            await _run_one(client, job)
-            db.finish_job(job["id"], "done")
+            logs.info("past_search.job_start", job_id=job["id"], user_id=job.get("user_id"))
+            status = await _run_one(client, job)
+            db.finish_job(job["id"], status)
+            logs.info("past_search.job_done", job_id=job["id"], user_id=job.get("user_id"), status=status)
         except Exception as exc:
-            print(f"[past_search] job {job['id']} failed: {exc!r}")
+            logs.exception("past_search.job_failed", exc, job_id=job["id"], user_id=job.get("user_id"))
+            db.update_job_progress(job["id"], stage="error")
             db.finish_job(job["id"], "error", repr(exc))
+            telegram_api.send_message(
+                job.get("user_id"),
+                f"Past Search #{job['id']} failed. Use /search_status for details.",
+            )
 
 
-async def _run_one(client: TelegramClient, job: dict) -> None:
+async def _run_one(client: TelegramClient, job: dict) -> str:
     user_id = job["user_id"]
     payload = job.get("payload") or {}
     lookback = int(payload.get("lookback_days") or config.DEFAULT_LOOKBACK_DAYS)
@@ -38,22 +45,35 @@ async def _run_one(client: TelegramClient, job: dict) -> None:
     chat_id = user_id
     channels = db.channel_usernames(user_id)
     if not channels:
-        telegram_api.send_message(chat_id, "You have no source channels to search.")
-        return
+        db.update_job_progress(job["id"], stage="error", message="no source channels")
+        telegram_api.send_message(chat_id, "You have no source channels/groups to search.")
+        return "error"
     if not profile:
+        db.update_job_progress(job["id"], stage="error", message="empty match profile")
         telegram_api.send_message(
             chat_id,
             "Your match profile was empty, so I couldn't search. Save one in /settings.",
         )
-        return
+        return "error"
 
     boundary = timeutil.now_utc() - timedelta(days=lookback)
-    await scrape_user_channels(client, channels, boundary)
+    db.update_job_progress(
+        job["id"],
+        stage="scraping",
+        sources_total=len(channels),
+        sources_done=0,
+        posts_written=0,
+        matches_found=0,
+    )
+    posts_written = await scrape_user_channels(client, channels, boundary, job_id=job["id"])
 
+    db.update_job_progress(job["id"], stage="embedding_query", posts_written=posts_written)
     query_vec = embeddings.embed_query(profile)
+    db.update_job_progress(job["id"], stage="matching")
     results = db.match_source_posts(
         query_vec, channels, common.threshold(), posted_after=timeutil.iso(boundary)
     )
+    db.update_job_progress(job["id"], stage="delivering", matches_found=len(results))
 
     for r in results:
         db.record_match(user_id, r["id"], r.get("similarity", 0.0), "past_search")
@@ -62,3 +82,5 @@ async def _run_one(client: TelegramClient, job: dict) -> None:
         common.deliver_batch(chat_id, results)
     else:
         telegram_api.send_message(chat_id, "No matches found.")
+    db.update_job_progress(job["id"], stage="done", matches_found=len(results), posts_written=posts_written)
+    return "done"

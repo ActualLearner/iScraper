@@ -15,7 +15,7 @@ from typing import Any
 from telethon import TelegramClient
 
 from core import channels as ch
-from core import db, embeddings, ocr, timeutil
+from core import db, embeddings, logs, ocr, timeutil
 from core.text import normalize_content
 
 
@@ -68,7 +68,7 @@ async def _ocr_image_messages(messages: list[Any], username: str) -> tuple[str, 
                     continue
                 text = await asyncio.to_thread(ocr.image_to_text, path)
             except Exception as exc:
-                print(f"[scrape] OCR failed for @{username}/{message.id}: {exc!r}")
+                logs.exception("scrape.ocr_failed", exc, source=username, message_id=message.id)
                 continue
             if text:
                 texts.append(text)
@@ -113,6 +113,7 @@ async def scrape_channel(
     groups: dict[str, list[Any]] = {}
 
     try:
+        logs.info("scrape.channel_start", source=username, boundary=timeutil.iso(boundary), max_messages=max_messages)
         async for message in client.iter_messages(username, limit=max_messages):
             posted_at = message.date  # aware UTC
             if posted_at and posted_at < boundary:
@@ -183,9 +184,10 @@ async def scrape_channel(
                     db.update_post(existing["id"], **fields)
             # else: unchanged -> skip re-embedding (cheap direct comparison)
     except Exception as exc:
-        print(f"[scrape] skipping @{username}: {exc!r}")
+        logs.exception("scrape.channel_failed", exc, source=username)
         return 0
 
+    logs.info("scrape.channel_collected", source=username, groups=len(groups), embedding_candidates=len(embed_texts))
     if not embed_texts:
         return 0
 
@@ -203,12 +205,39 @@ async def scrape_channel(
                 db.update_post(post_id, **fields)
             written += 1
         except Exception as exc:
-            print(f"[scrape] write failed for @{username}: {exc!r}")
+            logs.exception("scrape.write_failed", exc, source=username)
+    logs.info("scrape.channel_done", source=username, written=written)
     return written
 
 
 async def scrape_user_channels(
-    client: TelegramClient, usernames: list[str], boundary: datetime
-) -> None:
-    for username in usernames:
-        await scrape_channel(client, username, boundary)
+    client: TelegramClient,
+    usernames: list[str],
+    boundary: datetime,
+    *,
+    job_id: int | None = None,
+) -> int:
+    total_written = 0
+    total = len(usernames)
+    for index, username in enumerate(usernames, start=1):
+        if job_id is not None:
+            db.update_job_progress(
+                job_id,
+                stage="scraping",
+                current_source=username,
+                sources_done=index - 1,
+                sources_total=total,
+                posts_written=total_written,
+            )
+        written = await scrape_channel(client, username, boundary)
+        total_written += written
+        if job_id is not None:
+            db.update_job_progress(
+                job_id,
+                stage="scraping",
+                current_source=username,
+                sources_done=index,
+                sources_total=total,
+                posts_written=total_written,
+            )
+    return total_written

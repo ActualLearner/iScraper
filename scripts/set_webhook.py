@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import httpx
 
-from core import config
+from core import config, telegram_api
 
 
 def _api(method: str, payload: dict) -> dict:
@@ -51,6 +51,9 @@ def main(argv: list[str]) -> None:
         print("WARNING: WEBHOOK_SECRET is not set; the webhook will be unauthenticated.")
     print(f"Setting webhook -> {url}")
     print(_api("setWebhook", payload))
+    print("Installing command menu")
+    print(_api("setMyCommands", {"commands": telegram_api.BOT_COMMANDS}))
+    print(_api("setChatMenuButton", {"menu_button": {"type": "commands"}}))
     print(_api("getWebhookInfo", {}))
 
 

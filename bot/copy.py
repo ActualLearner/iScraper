@@ -11,7 +11,7 @@ BETA_FULL = (
 
 WELCOME = (
     "\U0001f44b Welcome to <b>iScraper</b>!\n\n"
-    "I watch public Telegram channels and send you posts that match what you're "
+    "I watch public Telegram channels/groups and send you posts that match what you're "
     "looking for — great for finding jobs and internships.\n\n"
     "Let's set you up. First, your <b>match profile</b> (optional)."
 )
@@ -32,26 +32,26 @@ PROFILE_SAVED = "✅ Saved your match profile."
 PROFILE_NONE = "You don't have a saved match profile yet."
 
 ONBOARDING_CHANNELS_PROMPT = (
-    "Now add at least one <b>source channel</b> to watch.\n\n"
-    "Send a public channel as <code>@channelusername</code> or "
-    "<code>https://t.me/channelusername</code>. You can send several at once, "
+    "Now add at least one <b>source channel/group</b> to watch.\n\n"
+    "Send a public channel or group as <code>@publicusername</code> or "
+    "<code>https://t.me/publicusername</code>. You can send several at once, "
     "separated by spaces."
 )
 
 ADD_CHANNELS_PROMPT = (
-    "Send a public channel as <code>@channelusername</code> or "
-    "<code>https://t.me/channelusername</code>. You can send several at once, "
+    "Send a public channel or group as <code>@publicusername</code> or "
+    "<code>https://t.me/publicusername</code>. You can send several at once, "
     "separated by spaces."
 )
 
 PRIVATE_LINK_REJECT = (
-    "Private channel links are not supported yet. For now, please add a public "
-    "channel using <code>@channelusername</code> or "
-    "<code>https://t.me/channelusername</code>."
+    "Private invite links are not supported yet. For now, please add a public "
+    "channel/group using <code>@publicusername</code> or "
+    "<code>https://t.me/publicusername</code>."
 )
 INVALID_FORMAT_REJECT = (
-    "Please send a public Telegram channel as <code>@channelusername</code> or "
-    "<code>https://t.me/channelusername</code>."
+    "Please send a public Telegram channel/group as <code>@publicusername</code> or "
+    "<code>https://t.me/publicusername</code>."
 )
 
 ONBOARDING_DONE = (
@@ -78,8 +78,8 @@ NEAR_LIVE_EXPLAINER = (
 )
 
 PAST_SEARCH_QUEUED = (
-    "\U0001f50d Searching the last {days} day(s) across your {n} channel(s). "
-    "I'll send results here shortly."
+    "\U0001f50d Queued Past Search #{job_id}: last {days} day(s) across your {n} source(s). "
+    "Use /search_status to check progress."
 )
 NO_MATCHES = "No matches found."
 
