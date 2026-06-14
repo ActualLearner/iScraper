@@ -117,12 +117,17 @@ async def _run_one(client: TelegramClient, job: dict) -> str:
         retry_after = stats.get("retry_after") if isinstance(stats.get("retry_after"), str) else None
         raise DeferredPastSearch("Gemini embedding quota exhausted; retrying later.", retry_after=retry_after)
     if int(stats.get("remaining") or 0) > 0:
+        retry_after = timeutil.iso(
+            timeutil.now_utc()
+            + timedelta(minutes=config.EMBEDDING_BACKLOG_RETRY_MINUTES)
+        )
         db.update_job_progress(
             job["id"],
             stage="embedding_posts",
-            message="Embedding backlog remains; continuing on the next worker run.",
+            next_attempt_after=retry_after,
+            message="Daily embedding budget kept in reserve; continuing later.",
         )
-        raise DeferredPastSearch("Embedding backlog remains; continuing on the next worker run.")
+        raise DeferredPastSearch("Embedding backlog remains; continuing later.", retry_after=retry_after)
 
     db.update_job_progress(job["id"], stage="embedding_query", posts_written=posts_written)
     try:

@@ -98,18 +98,29 @@ def embed_query(text: str) -> list[float]:
     return _many_embedding_001([query], "RETRIEVAL_QUERY")[0]
 
 
+def _error_text(exc: Exception) -> str:
+    return f"{type(exc).__name__} {exc!r}".lower()
+
+
 def is_quota_error(exc: Exception) -> bool:
     """Return true for Gemini rate-limit/quota failures from SDK exceptions."""
-    text = f"{type(exc).__name__} {exc!r}".lower()
+    text = _error_text(exc)
     return (
         "resource_exhausted" in text
         or "429" in text
         or "quota" in text
         or "rate limit" in text
+        or "too many requests" in text
     )
 
 
-def quota_retry_after_iso() -> str:
-    return timeutil.iso(
-        timeutil.now_utc() + timedelta(minutes=config.EMBEDDING_QUOTA_RETRY_MINUTES)
-    )
+def is_daily_quota_error(exc: Exception) -> bool:
+    text = _error_text(exc)
+    return "per day" in text or "requests per day" in text or "rpd" in text
+
+
+def quota_retry_after_iso(exc: Exception | None = None) -> str:
+    minutes = config.EMBEDDING_QUOTA_RETRY_MINUTES
+    if exc is not None and is_daily_quota_error(exc):
+        minutes = config.EMBEDDING_DAILY_RETRY_MINUTES
+    return timeutil.iso(timeutil.now_utc() + timedelta(minutes=minutes))

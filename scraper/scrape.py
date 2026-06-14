@@ -97,6 +97,12 @@ async def _build_source_post_base(username: str, messages: list[Any]) -> dict[st
     }
 
 
+def _estimated_input_tokens(text: str) -> int:
+    # Conservative approximation for quota pacing: English text is commonly
+    # around 4 chars/token, but OCR output can be noisy, so use 3 chars/token.
+    return max(1, (len(text or "") + 2) // 3)
+
+
 async def embed_pending_posts(
     channel_usernames: list[str],
     posted_after: str | None = None,
@@ -114,19 +120,26 @@ async def embed_pending_posts(
         return {"embedded": 0, "remaining": 0, "quota_exhausted": False}
 
     limit_value = config.EMBEDDING_MAX_PER_RUN if max_count is None else max_count
+    daily_cap = config.EMBEDDING_REQUESTS_PER_DAY - config.EMBEDDING_DAILY_REQUEST_RESERVE
+    if daily_cap > 0:
+        limit_value = min(limit_value, daily_cap) if limit_value and limit_value > 0 else daily_cap
     limit = limit_value if limit_value and limit_value > 0 else None
     remaining_before = db.count_unembedded_posts(channel_usernames, posted_after)
     if remaining_before <= 0:
         return {"embedded": 0, "remaining": 0, "quota_exhausted": False}
 
     rows = db.list_unembedded_posts(channel_usernames, posted_after, limit=limit)
-    delay = 60.0 / config.EMBEDDING_REQUESTS_PER_MINUTE if config.EMBEDDING_REQUESTS_PER_MINUTE > 0 else 0.0
+    request_delay = 60.0 / config.EMBEDDING_REQUESTS_PER_MINUTE if config.EMBEDDING_REQUESTS_PER_MINUTE > 0 else 0.0
+    token_budget = max(config.EMBEDDING_INPUT_TOKENS_PER_MINUTE, 0)
     logs.info(
         "embedding.backlog_start",
         remaining=remaining_before,
         selected=len(rows),
         limit=limit or "none",
         rpm=config.EMBEDDING_REQUESTS_PER_MINUTE or "unlimited",
+        tpm=token_budget or "unlimited",
+        rpd=config.EMBEDDING_REQUESTS_PER_DAY or "unlimited",
+        daily_reserve=config.EMBEDDING_DAILY_REQUEST_RESERVE,
     )
     if job_id is not None:
         db.update_job_progress(
@@ -139,13 +152,32 @@ async def embed_pending_posts(
     embedded = 0
     quota_exhausted = False
     retry_after: str | None = None
+    window_started = timeutil.now_utc()
+    window_tokens = 0
     for index, row in enumerate(rows, start=1):
+        content = row.get("normalized_content") or ""
+        estimated_tokens = _estimated_input_tokens(content)
+        if token_budget and window_tokens + estimated_tokens > token_budget:
+            elapsed = (timeutil.now_utc() - window_started).total_seconds()
+            sleep_for = max(60.0 - elapsed, 0.0)
+            logs.info(
+                "embedding.token_cooldown",
+                sleep_seconds=round(sleep_for, 3),
+                window_tokens=window_tokens,
+                next_tokens=estimated_tokens,
+                tpm=token_budget,
+            )
+            if sleep_for > 0:
+                await asyncio.sleep(sleep_for)
+            window_started = timeutil.now_utc()
+            window_tokens = 0
+
         try:
-            vector = embeddings.embed_document(row.get("normalized_content") or "")
+            vector = embeddings.embed_document(content)
         except Exception as exc:
             if embeddings.is_quota_error(exc):
                 quota_exhausted = True
-                retry_after = embeddings.quota_retry_after_iso()
+                retry_after = embeddings.quota_retry_after_iso(exc)
                 logs.exception(
                     "embedding.quota_exhausted",
                     exc,
@@ -165,6 +197,7 @@ async def embed_pending_posts(
 
         db.update_post(row["id"], embedding=vector)
         embedded += 1
+        window_tokens += estimated_tokens
         if embedded == 1 or embedded % 10 == 0:
             progress_remaining = max(remaining_before - embedded, 0)
             logs.info(
@@ -182,8 +215,8 @@ async def embed_pending_posts(
                     embedding_backlog=progress_remaining,
                     current_source=row.get("channel_username"),
                 )
-        if delay > 0 and index < len(rows):
-            await asyncio.sleep(delay)
+        if request_delay > 0 and index < len(rows):
+            await asyncio.sleep(request_delay)
 
     remaining_after = db.count_unembedded_posts(channel_usernames, posted_after)
     stats: dict[str, object] = {

@@ -93,7 +93,7 @@ The current beta uses threshold-only semantic matching. This keeps the system si
 - Past Search is queued. It is processed by worker runs, not immediately by the webhook.
 - Large Past Searches may take multiple worker runs while posts are indexed under Gemini quota limits.
 - Scraping walks backward until the lookback boundary; `SCRAPE_MAX_MESSAGES` is an optional emergency cap and defaults to unlimited.
-- Post embedding is paced by `EMBEDDING_REQUESTS_PER_MINUTE` and capped per run by `EMBEDDING_MAX_PER_RUN`.
+- Post embedding is paced below Gemini free limits: 100 RPM, 30k input TPM, and 1,000 RPD. Defaults use 80 RPM, 24k TPM, and 900 post embeddings per run.
 - Jobs left `running` by canceled worker runs are retried after `JOB_STALE_MINUTES`.
 - OCR is English by default through Tesseract, configurable with `OCR_LANGS`.
 - The beta cap defaults to 5 users.
@@ -154,13 +154,17 @@ SIMILARITY_THRESHOLD
 SCRAPE_MAX_MESSAGES
 SCRAPE_PROGRESS_EVERY
 EMBEDDING_REQUESTS_PER_MINUTE
+EMBEDDING_INPUT_TOKENS_PER_MINUTE
+EMBEDDING_REQUESTS_PER_DAY
+EMBEDDING_DAILY_REQUEST_RESERVE
 EMBEDDING_MAX_PER_RUN
 EMBEDDING_QUOTA_RETRY_MINUTES
+EMBEDDING_BACKLOG_RETRY_MINUTES
 OCR_LANGS
 OCR_TIMEOUT_SECONDS
 ```
 
-Check your project's Gemini quota in AI Studio, then set `EMBEDDING_REQUESTS_PER_MINUTE` at or below that RPM. The default is conservative so big Past Searches continue across runs instead of failing on a 429.
+For the current Gemini free embedding quota, keep `EMBEDDING_REQUESTS_PER_MINUTE` at or below 100 and `EMBEDDING_INPUT_TOKENS_PER_MINUTE` at or below 30000. Defaults stay under those limits and reserve daily calls for query embeddings, retries, and alerts.
 
 The scraper should use a real Telegram user session for `TELETHON_SESSION`, not the bot token, because the worker needs to read public Telegram history with Telethon.
 
