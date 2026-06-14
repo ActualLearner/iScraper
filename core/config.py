@@ -72,7 +72,7 @@ SIMILARITY_THRESHOLD = _float("SIMILARITY_THRESHOLD", 0.70)
 
 # --- OCR ---
 OCR_LANGS = _get("OCR_LANGS", "eng") or "eng"
-OCR_TIMEOUT_SECONDS = _float("OCR_TIMEOUT_SECONDS", 8.0)
+OCR_TIMEOUT_SECONDS = _float("OCR_TIMEOUT_SECONDS", 15.0)
 OCR_TESSERACT_CONFIG = _get("OCR_TESSERACT_CONFIG", "--psm 6") or ""
 
 # --- Limits / defaults (from product-spec.md) ---
