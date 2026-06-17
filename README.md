@@ -92,10 +92,10 @@ The current beta uses threshold-only semantic matching. This keeps the system si
 - Public channels and public supergroups are supported. Private sources are not.
 - Past Search is queued. It is processed by worker runs, not immediately by the webhook.
 - Large Past Searches may take multiple worker runs while posts are indexed under Gemini quota limits.
-- Scraping walks backward until the lookback boundary; `SCRAPE_MAX_MESSAGES` is an optional emergency cap and defaults to unlimited.
+- Scraping walks backward until the lookback boundary; `SCRAPE_MAX_MESSAGES` is an optional emergency cap and defaults to unlimited. The scraper processes posts in small batches so it does not keep the whole channel window in memory.
 - Post embedding is paced below Gemini free limits: 100 RPM, 30k input TPM, and 1,000 RPD. Defaults use 80 RPM, 24k TPM, and 900 post embeddings per run.
 - Jobs left `running` by canceled worker runs are retried after `JOB_STALE_MINUTES`.
-- OCR is English by default through Tesseract, configurable with `OCR_LANGS`.
+- OCR is English by default through Tesseract, configurable with `OCR_LANGS`. It is bounded by image count, file size, pixel count, download timeout, and Tesseract timeout so a single image cannot monopolize the worker.
 - The beta cap defaults to 5 users.
 - Live integration behavior depends on Telegram, Supabase, Gemini, Vercel, and GitHub Actions free-tier constraints.
 
@@ -153,6 +153,13 @@ Useful optional GitHub Actions variables:
 SIMILARITY_THRESHOLD
 SCRAPE_MAX_MESSAGES
 SCRAPE_PROGRESS_EVERY
+SCRAPE_GROUP_BATCH_SIZE
+PAST_SEARCH_JOBS_PER_RUN
+WORKER_RUN_TIMEOUT_SECONDS
+WORKER_STAGE_TIMEOUT_SECONDS
+SUPABASE_DB_RETRIES
+SUPABASE_DB_RETRY_BACKOFF_SECONDS
+SUPABASE_DB_RETRY_JOB_MINUTES
 EMBEDDING_REQUESTS_PER_MINUTE
 EMBEDDING_INPUT_TOKENS_PER_MINUTE
 EMBEDDING_REQUESTS_PER_DAY
@@ -160,8 +167,18 @@ EMBEDDING_DAILY_REQUEST_RESERVE
 EMBEDDING_MAX_PER_RUN
 EMBEDDING_QUOTA_RETRY_MINUTES
 EMBEDDING_BACKLOG_RETRY_MINUTES
+OCR_ENABLED
 OCR_LANGS
 OCR_TIMEOUT_SECONDS
+OCR_DOWNLOAD_TIMEOUT_SECONDS
+OCR_MAX_IMAGES_PER_POST
+OCR_MAX_IMAGE_MB
+OCR_MAX_IMAGE_PIXELS
+OCR_MAX_IMAGE_DIMENSION
+OCR_MAX_TEXT_CHARS
+OCR_SKIP_WHEN_CAPTION_PRESENT
+OCR_THREAD_LIMIT
+OCR_TESSERACT_CONFIG
 ```
 
 For the current Gemini free embedding quota, keep `EMBEDDING_REQUESTS_PER_MINUTE` at or below 100 and `EMBEDDING_INPUT_TOKENS_PER_MINUTE` at or below 30000. Defaults stay under those limits and reserve daily calls for query embeddings, retries, and alerts.

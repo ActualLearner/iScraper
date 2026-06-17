@@ -26,7 +26,7 @@ class DeferredPastSearch(Exception):
 
 async def run_pending(client: TelegramClient) -> None:
     failures: list[int] = []
-    for job in db.claim_pending_jobs():
+    for job in db.claim_pending_jobs(limit=config.PAST_SEARCH_JOBS_PER_RUN):
         if job.get("type") != "past_search":
             db.finish_job(job["id"], "done")
             continue
@@ -45,6 +45,26 @@ async def run_pending(client: TelegramClient) -> None:
                 retry_after=exc.retry_after,
             )
         except Exception as exc:
+            if db.is_transient_error(exc):
+                retry_after = timeutil.iso(
+                    timeutil.now_utc()
+                    + timedelta(minutes=config.SUPABASE_DB_RETRY_JOB_MINUTES)
+                )
+                db.update_job_progress(
+                    job["id"],
+                    stage="retry_wait",
+                    next_attempt_after=retry_after,
+                    message="Temporary database connection error; retrying later.",
+                )
+                db.defer_job(job["id"], repr(exc))
+                logs.info(
+                    "past_search.job_deferred",
+                    job_id=job["id"],
+                    user_id=job.get("user_id"),
+                    reason="temporary database connection error",
+                    retry_after=retry_after,
+                )
+                continue
             logs.exception("past_search.job_failed", exc, job_id=job["id"], user_id=job.get("user_id"))
             db.update_job_progress(job["id"], stage="error")
             db.finish_job(job["id"], "error", repr(exc))
