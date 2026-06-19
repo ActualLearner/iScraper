@@ -1,0 +1,5 @@
+build:
+  docker:
+    worker: Dockerfile.heroku
+run:
+  worker: python -m scripts.worker_loop
