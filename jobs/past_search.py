@@ -133,9 +133,6 @@ async def _run_one(client: TelegramClient, job: dict) -> str:
         )
 
     stats = await embed_pending_posts(channels, boundary_iso, job_id=job["id"])
-    if stats.get("quota_exhausted"):
-        retry_after = stats.get("retry_after") if isinstance(stats.get("retry_after"), str) else None
-        raise DeferredPastSearch("Gemini embedding quota exhausted; retrying later.", retry_after=retry_after)
     if int(stats.get("remaining") or 0) > 0:
         retry_after = timeutil.iso(
             timeutil.now_utc()
@@ -145,24 +142,12 @@ async def _run_one(client: TelegramClient, job: dict) -> str:
             job["id"],
             stage="embedding_posts",
             next_attempt_after=retry_after,
-            message="Daily embedding budget kept in reserve; continuing later.",
+            message="Indexing remaining posts; continuing on the next worker run.",
         )
         raise DeferredPastSearch("Embedding backlog remains; continuing later.", retry_after=retry_after)
 
     db.update_job_progress(job["id"], stage="embedding_query", posts_written=posts_written)
-    try:
-        query_vec = embeddings.embed_query(profile)
-    except Exception as exc:
-        if embeddings.is_quota_error(exc):
-            retry_after = embeddings.quota_retry_after_iso()
-            db.update_job_progress(
-                job["id"],
-                stage="embedding_query",
-                next_attempt_after=retry_after,
-                message="Gemini quota exhausted while embedding the query; waiting to retry.",
-            )
-            raise DeferredPastSearch("Gemini embedding quota exhausted; retrying later.", retry_after=retry_after)
-        raise
+    query_vec = embeddings.embed_query(profile)
     db.update_job_progress(job["id"], stage="matching")
     results = db.match_source_posts(
         query_vec, channels, common.threshold(), posted_after=boundary_iso

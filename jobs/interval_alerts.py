@@ -64,11 +64,10 @@ async def _run(client: TelegramClient, user: dict) -> None:
     )
     await scrape_user_channels(client, channels, last)
     stats = await embed_pending_posts(channels, timeutil.iso(last))
-    if stats.get("quota_exhausted") or int(stats.get("remaining") or 0) > 0:
+    if int(stats.get("remaining") or 0) > 0:
         logs.info(
             "interval.deferred",
             user_id=user_id,
-            quota_exhausted=stats.get("quota_exhausted"),
             embedding_backlog=stats.get("remaining"),
         )
         return

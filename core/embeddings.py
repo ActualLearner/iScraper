@@ -1,89 +1,64 @@
-"""Google Gemini embeddings (free tier).
+"""Local text embeddings via fastembed (ONNX, CPU).
 
-Only used by the worker; the webhook never embeds, so `google-genai` is lazily
-imported and lives only in the worker's requirements.txt.
+Only the worker embeds; the webhook never does. fastembed + onnxruntime are heavy
+imports, so they live only in requirements-worker.txt and are imported lazily.
 
-The default model is `gemini-embedding-2`, which supports 768-dimensional output
-and requires retrieval intent to be expressed as text prefixes rather than the
-older `task_type` field. `gemini-embedding-001` remains supported for overrides.
+The model is selected by `config.EMBEDDING_MODEL` and runs in-process on CPU, so it
+holds RAM for the life of the worker. Switching models is a config change: set
+`EMBEDDING_MODEL`, `EMBEDDING_DIM`, and the prefix settings in core/config.py (and
+change the `vector(...)` column + match function in scripts/init_db.sql if the new
+model's native dimension differs).
+
+The default model, nomic-embed-text-v1.5, REQUIRES task prefixes ("search_query:" /
+"search_document:") and supports Matryoshka truncation: its native 768-dim vector
+can be sliced to a smaller `EMBEDDING_DIM` and re-normalized with little quality
+loss. fastembed's `.embed()` does not add prefixes itself, so we prepend them here.
 """
 from __future__ import annotations
 
-from datetime import timedelta
 from functools import lru_cache
 
-from core import config, timeutil
+from core import config
 
 
 @lru_cache(maxsize=1)
-def _client():
-    from google import genai
+def _model():
+    from fastembed import TextEmbedding
 
-    if not config.GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not configured")
-    return genai.Client(api_key=config.GEMINI_API_KEY)
-
-
-# Gemini Embedding 001 supports multiple inputs per request; Embedding 2 returns
-# one aggregate embedding for multiple inputs, so it must be called per item.
-_BATCH = 100
+    kwargs: dict = {"model_name": config.EMBEDDING_MODEL}
+    if config.EMBEDDING_CACHE_DIR:
+        kwargs["cache_dir"] = config.EMBEDDING_CACHE_DIR
+    if config.EMBEDDING_THREADS > 0:
+        kwargs["threads"] = config.EMBEDDING_THREADS
+    return TextEmbedding(**kwargs)
 
 
-def _is_embedding_2() -> bool:
-    return config.EMBEDDING_MODEL == "gemini-embedding-2"
+def _truncate(vector: list[float]) -> list[float]:
+    """Matryoshka truncation: slice to EMBEDDING_DIM and L2-renormalize.
+
+    A no-op when EMBEDDING_DIM matches (or exceeds) the model's native dimension.
+    """
+    dim = config.EMBEDDING_DIM
+    if dim <= 0 or dim >= len(vector):
+        return vector
+    sliced = vector[:dim]
+    norm = sum(v * v for v in sliced) ** 0.5
+    if norm == 0:
+        return sliced
+    return [v / norm for v in sliced]
 
 
-def _document_text(text: str) -> str:
-    if _is_embedding_2():
-        return f"title: none | text: {text}"
-    return text
-
-
-def _query_text(text: str) -> str:
-    if _is_embedding_2():
-        return f"task: search result | query: {text}"
-    return text
-
-
-def _config(task_type: str | None = None):
-    from google.genai import types
-
-    kwargs = {"output_dimensionality": config.EMBEDDING_DIM}
-    if task_type and not _is_embedding_2():
-        kwargs["task_type"] = task_type
-    return types.EmbedContentConfig(**kwargs)
-
-
-def _single(text: str, task_type: str | None = None) -> list[float]:
-    result = _client().models.embed_content(
-        model=config.EMBEDDING_MODEL,
-        contents=text,
-        config=_config(task_type),
-    )
-    return list(result.embeddings[0].values)
-
-
-def _many_embedding_001(texts: list[str], task_type: str) -> list[list[float]]:
+def _embed(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
-    vectors: list[list[float]] = []
-    for start in range(0, len(texts), _BATCH):
-        batch = texts[start:start + _BATCH]
-        result = _client().models.embed_content(
-            model=config.EMBEDDING_MODEL,
-            contents=batch,
-            config=_config(task_type),
-        )
-        vectors.extend(list(e.values) for e in result.embeddings)
-    return vectors
+    raw = _model().embed(texts, batch_size=config.EMBEDDING_BATCH)
+    return [_truncate(vec.tolist()) for vec in raw]
 
 
 def embed_documents(texts: list[str]) -> list[list[float]]:
-    """Embed source post contents for storage."""
-    docs = [_document_text(t) for t in texts]
-    if _is_embedding_2():
-        return [_single(t) for t in docs]
-    return _many_embedding_001(docs, "RETRIEVAL_DOCUMENT")
+    """Embed source-post contents for storage."""
+    prefixed = [config.EMBEDDING_DOCUMENT_PREFIX + (t or "") for t in texts]
+    return _embed(prefixed)
 
 
 def embed_document(text: str) -> list[float]:
@@ -92,35 +67,4 @@ def embed_document(text: str) -> list[float]:
 
 def embed_query(text: str) -> list[float]:
     """Embed a match profile for semantic search."""
-    query = _query_text(text)
-    if _is_embedding_2():
-        return _single(query)
-    return _many_embedding_001([query], "RETRIEVAL_QUERY")[0]
-
-
-def _error_text(exc: Exception) -> str:
-    return f"{type(exc).__name__} {exc!r}".lower()
-
-
-def is_quota_error(exc: Exception) -> bool:
-    """Return true for Gemini rate-limit/quota failures from SDK exceptions."""
-    text = _error_text(exc)
-    return (
-        "resource_exhausted" in text
-        or "429" in text
-        or "quota" in text
-        or "rate limit" in text
-        or "too many requests" in text
-    )
-
-
-def is_daily_quota_error(exc: Exception) -> bool:
-    text = _error_text(exc)
-    return "per day" in text or "requests per day" in text or "rpd" in text
-
-
-def quota_retry_after_iso(exc: Exception | None = None) -> str:
-    minutes = config.EMBEDDING_QUOTA_RETRY_MINUTES
-    if exc is not None and is_daily_quota_error(exc):
-        minutes = config.EMBEDDING_DAILY_RETRY_MINUTES
-    return timeutil.iso(timeutil.now_utc() + timedelta(minutes=minutes))
+    return _embed([config.EMBEDDING_QUERY_PREFIX + (text or "")])[0]

@@ -3,7 +3,7 @@
 # scripts/set_webhook.py:   pip install -r requirements-worker.txt
 
 telethon==1.36.0          # scraping public channels with a user account (MTProto)
-google-genai==1.2.0       # Gemini embeddings
+fastembed==0.8.0          # local ONNX text embeddings (pulls onnxruntime + numpy)
 supabase==2.9.1           # Supabase Postgres client
 httpx==0.27.2             # Telegram Bot API calls
 python-dotenv==1.0.1      # load .env for local runs

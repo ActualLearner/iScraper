@@ -56,11 +56,10 @@ async def _run(client: TelegramClient, user: dict) -> None:
     scrape_boundary = max(started, last_checked - timedelta(minutes=2))
     await scrape_user_channels(client, channels, scrape_boundary)
     stats = await embed_pending_posts(channels, timeutil.iso(scrape_boundary))
-    if stats.get("quota_exhausted") or int(stats.get("remaining") or 0) > 0:
+    if int(stats.get("remaining") or 0) > 0:
         logs.info(
             "near_live.deferred",
             user_id=user_id,
-            quota_exhausted=stats.get("quota_exhausted"),
             embedding_backlog=stats.get("remaining"),
         )
         return

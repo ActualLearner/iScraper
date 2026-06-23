@@ -33,7 +33,6 @@ async def _run_once() -> None:
         "BOT_TOKEN",
         "SUPABASE_URL",
         "SUPABASE_SERVICE_KEY",
-        "GEMINI_API_KEY",
     )
 
     logs.info(

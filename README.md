@@ -63,7 +63,7 @@ Vercel Python webhook  <---->  Supabase Postgres + pgvector
       +------------------------- delivers matches
                                        |
                                        v
-                         Telethon + Tesseract OCR + Gemini embeddings
+                         Telethon + Tesseract OCR + local embeddings
 ```
 
 The system is split into three deployable surfaces:
@@ -80,7 +80,7 @@ Supabase is the single source of truth for users, source lists, conversation sta
 2. The worker scrapes source history with Telethon.
 3. Telegram albums are grouped into one logical post.
 4. Captions and OCR text are combined into one searchable content field.
-5. Gemini generates embeddings for new or changed posts.
+5. The worker generates embeddings locally (fastembed / ONNX, on CPU) for new or changed posts.
 6. Supabase `pgvector` finds posts above the configured similarity threshold.
 7. Matches are delivered through the Telegram Bot API.
 
@@ -91,13 +91,13 @@ The current beta uses threshold-only semantic matching. This keeps the system si
 - Near-Live is polling-based, not instant. The worker is scheduled through GitHub Actions, so runs may be delayed.
 - Public channels and public supergroups are supported. Private sources are not.
 - Past Search is queued. It is processed by worker runs, not immediately by the webhook.
-- Large Past Searches may take multiple worker runs while posts are indexed under Gemini quota limits.
+- Large Past Searches may take multiple worker runs while posts are indexed. There are no embedding rate limits, but a run can be interrupted (or the dyno restarted) and the still-unindexed posts resume on the next pass.
 - Scraping walks backward until the lookback boundary; `SCRAPE_MAX_MESSAGES` is an optional emergency cap and defaults to unlimited. The scraper processes posts in small batches so it does not keep the whole channel window in memory.
-- Post embedding is paced below Gemini free limits: 100 RPM, 30k input TPM, and 1,000 RPD. Defaults use 80 RPM, 24k TPM, and 900 post embeddings per run.
+- Post embedding runs locally with no rate limit. It streams the backlog in DB pages and embeds in small batches (`EMBEDDING_DB_PAGE`, `EMBEDDING_BATCH`), writing each vector back immediately, so peak memory stays flat regardless of backlog size — important under the worker dyno's RAM cap.
 - Jobs left `running` by canceled worker runs are retried after `JOB_STALE_MINUTES`.
 - OCR is English by default through Tesseract, configurable with `OCR_LANGS`. It is bounded by image count, file size, pixel count, download timeout, and Tesseract timeout so a single image cannot monopolize the worker.
 - The beta cap defaults to 5 users.
-- Live integration behavior depends on Telegram, Supabase, Gemini, Vercel, and GitHub Actions free-tier constraints.
+- Live integration behavior depends on Telegram, Supabase, Vercel, and worker (Heroku) free/low-tier constraints — notably the worker dyno's RAM cap, which bounds the local embedding model.
 
 ## Running Locally
 
@@ -144,8 +144,10 @@ TELEGRAM_API_HASH
 TELETHON_SESSION
 SUPABASE_URL
 SUPABASE_SERVICE_KEY
-GEMINI_API_KEY
 ```
+
+Embeddings run locally on the worker (no API key, no network at runtime); the model
+is baked into the Docker image at build time.
 
 Useful optional GitHub Actions variables:
 
@@ -160,12 +162,13 @@ WORKER_STAGE_TIMEOUT_SECONDS
 SUPABASE_DB_RETRIES
 SUPABASE_DB_RETRY_BACKOFF_SECONDS
 SUPABASE_DB_RETRY_JOB_MINUTES
-EMBEDDING_REQUESTS_PER_MINUTE
-EMBEDDING_INPUT_TOKENS_PER_MINUTE
-EMBEDDING_REQUESTS_PER_DAY
-EMBEDDING_DAILY_REQUEST_RESERVE
-EMBEDDING_MAX_PER_RUN
-EMBEDDING_QUOTA_RETRY_MINUTES
+EMBEDDING_MODEL
+EMBEDDING_DIM
+EMBEDDING_QUERY_PREFIX
+EMBEDDING_DOCUMENT_PREFIX
+EMBEDDING_BATCH
+EMBEDDING_DB_PAGE
+EMBEDDING_THREADS
 EMBEDDING_BACKLOG_RETRY_MINUTES
 OCR_ENABLED
 OCR_LANGS
@@ -181,7 +184,7 @@ OCR_THREAD_LIMIT
 OCR_TESSERACT_CONFIG
 ```
 
-For the current Gemini free embedding quota, keep `EMBEDDING_REQUESTS_PER_MINUTE` at or below 100 and `EMBEDDING_INPUT_TOKENS_PER_MINUTE` at or below 30000. Defaults stay under those limits and reserve daily calls for query embeddings, retries, and alerts.
+Embeddings run on CPU inside the worker, so memory is the constraint, not a rate limit. Lower `EMBEDDING_BATCH` (and optionally set `EMBEDDING_THREADS=1`) if the worker dyno approaches its RAM cap. Switching to a smaller model means changing `EMBEDDING_MODEL`/`EMBEDDING_DIM` (and its prefixes), altering the `vector(...)` column to the new dimension, and running `scripts/reset_embeddings.sql`. `SIMILARITY_THRESHOLD` must be re-tuned per model.
 
 The scraper should use a real Telegram user session for `TELETHON_SESSION`, not the bot token, because the worker needs to read public Telegram history with Telethon.
 

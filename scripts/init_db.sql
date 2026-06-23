@@ -3,9 +3,10 @@
 -- Run this once in the Supabase SQL editor (Dashboard -> SQL -> New query).
 -- Re-running is safe: it uses IF NOT EXISTS / CREATE OR REPLACE.
 --
--- Embedding dimension assumes Google Gemini `gemini-embedding-2` (768 dims).
--- If you change EMBEDDING_MODEL / EMBEDDING_DIM in core/config.py, change the
--- vector(768) columns and the match function signature below to match.
+-- Embedding dimension assumes the local default `nomic-ai/nomic-embed-text-v1.5`
+-- (768 dims). If you change EMBEDDING_MODEL / EMBEDDING_DIM in core/config.py,
+-- change the vector(768) columns and the match function signature below to match,
+-- then run scripts/reset_embeddings.sql so posts are re-embedded in the new space.
 
 create extension if not exists vector;
 

@@ -57,28 +57,43 @@ SUPABASE_DB_RETRIES = _int("SUPABASE_DB_RETRIES", 3)
 SUPABASE_DB_RETRY_BACKOFF_SECONDS = _float("SUPABASE_DB_RETRY_BACKOFF_SECONDS", 1.0)
 SUPABASE_DB_RETRY_JOB_MINUTES = _int("SUPABASE_DB_RETRY_JOB_MINUTES", 2)
 
-GEMINI_API_KEY = _get("GEMINI_API_KEY")
-
-# --- Embeddings ---
-EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "gemini-embedding-2")
+# --- Embeddings (local, via fastembed / ONNX on CPU) ---
+# The worker is the only process that embeds; the model runs in-process and holds
+# RAM for the worker's lifetime, so keep the model + batch small enough to stay
+# under the dyno's memory cap. Swapping models is a config change here (plus a
+# vector(...) column change in scripts/init_db.sql if the native dim differs).
+EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "nomic-ai/nomic-embed-text-v1.5")
+# Dimension actually stored. Defaults to nomic's native 768. nomic supports
+# Matryoshka truncation (512/256/128) for smaller vectors; to use it, set this
+# lower AND change the vector(...) column + match function to match.
 EMBEDDING_DIM = _int("EMBEDDING_DIM", 768)
-# Free Gemini embedding quota observed in AI Studio for this project:
-# 100 requests/minute, 30k input tokens/minute, 1,000 requests/day. Defaults
-# keep headroom so runner timing, query embeddings, and retries do not sit on
-# the hard limit.
-EMBEDDING_REQUESTS_PER_MINUTE = _int("EMBEDDING_REQUESTS_PER_MINUTE", 80)
-EMBEDDING_INPUT_TOKENS_PER_MINUTE = _int("EMBEDDING_INPUT_TOKENS_PER_MINUTE", 24000)
-EMBEDDING_REQUESTS_PER_DAY = _int("EMBEDDING_REQUESTS_PER_DAY", 1000)
-EMBEDDING_DAILY_REQUEST_RESERVE = _int("EMBEDDING_DAILY_REQUEST_RESERVE", 50)
-EMBEDDING_MAX_PER_RUN = _int("EMBEDDING_MAX_PER_RUN", 900)
-EMBEDDING_QUOTA_RETRY_MINUTES = _int("EMBEDDING_QUOTA_RETRY_MINUTES", 2)
-EMBEDDING_DAILY_RETRY_MINUTES = _int("EMBEDDING_DAILY_RETRY_MINUTES", 1440)
-EMBEDDING_BACKLOG_RETRY_MINUTES = _int("EMBEDDING_BACKLOG_RETRY_MINUTES", 1440)
+# Task instruction prefixes prepended before embedding. nomic REQUIRES these.
+# For a model that needs none (e.g. all-MiniLM-L6-v2), set both to "" in code.
+# For bge-small-en-v1.5: query prefix
+# "Represent this sentence for searching relevant passages: ", document "".
+EMBEDDING_QUERY_PREFIX = _get("EMBEDDING_QUERY_PREFIX", "search_query: ") or ""
+EMBEDDING_DOCUMENT_PREFIX = _get("EMBEDDING_DOCUMENT_PREFIX", "search_document: ") or ""
+# Texts per fastembed batch — the main lever on peak RAM during backfill.
+EMBEDDING_BATCH = _int("EMBEDDING_BATCH", 16)
+# Unembedded posts pulled from the DB per page while backfilling. Bounds row
+# memory so the backlog size never drives memory; the loop pages until drained.
+EMBEDDING_DB_PAGE = _int("EMBEDDING_DB_PAGE", 200)
+# Short cool-off before a Past Search resumes a backlog left unfinished (e.g. if a
+# worker run was killed mid-way). No longer tied to any provider rate limit.
+EMBEDDING_BACKLOG_RETRY_MINUTES = _int("EMBEDDING_BACKLOG_RETRY_MINUTES", 5)
+# Where fastembed stores the downloaded model. Set in the Docker image so the model
+# is baked at build time and not re-downloaded onto the dyno's ephemeral disk.
+EMBEDDING_CACHE_DIR = _get("EMBEDDING_CACHE_DIR")
+# Cap onnxruntime CPU threads (lower = less peak RAM/CPU on a small dyno). Unset
+# lets fastembed/onnxruntime decide.
+EMBEDDING_THREADS = _int("EMBEDDING_THREADS", 0)
 
 # --- Matching ---
-# Cosine similarity in [0, 1]; tune for the embedding model in use. The default
-# is intentionally stricter because v1 uses threshold-only relevance.
-SIMILARITY_THRESHOLD = _float("SIMILARITY_THRESHOLD", 0.70)
+# Cosine similarity in [0, 1]; MUST be tuned for the embedding model in use since
+# v1 uses threshold-only relevance. This default is a starting point for
+# nomic-embed-text-v1.5 (whose relevant-pair similarities run lower than Gemini's);
+# measure against real matches and adjust before relying on it.
+SIMILARITY_THRESHOLD = _float("SIMILARITY_THRESHOLD", 0.55)
 
 # --- OCR ---
 OCR_ENABLED = _bool("OCR_ENABLED", True)
