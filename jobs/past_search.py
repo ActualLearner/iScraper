@@ -132,8 +132,34 @@ async def _run_one(client: TelegramClient, job: dict) -> str:
             boundary=boundary_iso,
         )
 
-    stats = await embed_pending_posts(channels, boundary_iso, job_id=job["id"])
-    if int(stats.get("remaining") or 0) > 0:
+    # Embed a bounded chunk of the backlog this pass, then match and deliver what is
+    # already indexed. Matches stream out across worker passes instead of blocking on
+    # the whole backlog; a per-job delivered-id set keeps the same post from being
+    # sent twice. If posts remain unindexed, defer and continue on the next run.
+    embed_cap = config.PAST_SEARCH_EMBED_PER_RUN or None
+    stats = await embed_pending_posts(
+        channels, boundary_iso, max_count=embed_cap, job_id=job["id"]
+    )
+    remaining = int(stats.get("remaining") or 0)
+
+    db.update_job_progress(job["id"], stage="embedding_query", posts_written=posts_written)
+    query_vec = embeddings.embed_query(profile)
+    db.update_job_progress(job["id"], stage="matching")
+    results = db.match_source_posts(
+        query_vec, channels, common.threshold(), posted_after=boundary_iso
+    )
+
+    delivered = set(existing_progress.get("delivered_post_ids") or [])
+    fresh = [r for r in results if r["id"] not in delivered]
+    db.update_job_progress(job["id"], stage="delivering", matches_found=len(results))
+    for r in fresh:
+        db.record_match(user_id, r["id"], r.get("similarity", 0.0), "past_search")
+    if fresh:
+        common.deliver_batch(chat_id, fresh)
+        delivered.update(r["id"] for r in fresh)
+        db.update_job_progress(job["id"], delivered_post_ids=sorted(delivered))
+
+    if remaining > 0:
         retry_after = timeutil.iso(
             timeutil.now_utc()
             + timedelta(minutes=config.EMBEDDING_BACKLOG_RETRY_MINUTES)
@@ -142,24 +168,15 @@ async def _run_one(client: TelegramClient, job: dict) -> str:
             job["id"],
             stage="embedding_posts",
             next_attempt_after=retry_after,
-            message="Indexing remaining posts; continuing on the next worker run.",
+            message="Indexing more posts; further matches will follow.",
         )
-        raise DeferredPastSearch("Embedding backlog remains; continuing later.", retry_after=retry_after)
+        raise DeferredPastSearch(
+            "Embedding backlog remains; continuing later.", retry_after=retry_after
+        )
 
-    db.update_job_progress(job["id"], stage="embedding_query", posts_written=posts_written)
-    query_vec = embeddings.embed_query(profile)
-    db.update_job_progress(job["id"], stage="matching")
-    results = db.match_source_posts(
-        query_vec, channels, common.threshold(), posted_after=boundary_iso
-    )
-    db.update_job_progress(job["id"], stage="delivering", matches_found=len(results))
-
-    for r in results:
-        db.record_match(user_id, r["id"], r.get("similarity", 0.0), "past_search")
-
-    if results:
-        common.deliver_batch(chat_id, results)
-    else:
+    if not results:
         telegram_api.send_message(chat_id, "No matches found.")
-    db.update_job_progress(job["id"], stage="done", matches_found=len(results), posts_written=posts_written)
+    db.update_job_progress(
+        job["id"], stage="done", matches_found=len(results), posts_written=posts_written
+    )
     return "done"

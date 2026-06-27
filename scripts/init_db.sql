@@ -3,9 +3,9 @@
 -- Run this once in the Supabase SQL editor (Dashboard -> SQL -> New query).
 -- Re-running is safe: it uses IF NOT EXISTS / CREATE OR REPLACE.
 --
--- Embedding dimension assumes the local default `nomic-ai/nomic-embed-text-v1.5`
--- (768 dims). If you change EMBEDDING_MODEL / EMBEDDING_DIM in core/config.py,
--- change the vector(768) columns and the match function signature below to match,
+-- Embedding dimension assumes the local default `BAAI/bge-small-en-v1.5`
+-- (384 dims). If you change EMBEDDING_MODEL / EMBEDDING_DIM in core/config.py,
+-- change the vector(384) columns and the match function signature below to match,
 -- then run scripts/reset_embeddings.sql so posts are re-embedded in the new space.
 
 create extension if not exists vector;
@@ -68,7 +68,7 @@ create table if not exists source_posts (
     image_count        int not null default 0,
     content            text   not null,
     normalized_content text   not null,
-    embedding          vector(768),
+    embedding          vector(384),
     unique (channel_username, message_id)
 );
 
@@ -112,7 +112,7 @@ create index if not exists jobs_status_idx on jobs (status, created_at);
 -- posted at/after `posted_after`. `posted_after` may be null to ignore the lower
 -- time bound. Results are ordered most-similar first.
 create or replace function match_source_posts (
-    query_embedding vector(768),
+    query_embedding vector(384),
     channel_usernames text[],
     match_threshold float,
     posted_after timestamptz default null

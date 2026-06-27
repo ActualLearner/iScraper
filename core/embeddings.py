@@ -9,10 +9,13 @@ holds RAM for the life of the worker. Switching models is a config change: set
 change the `vector(...)` column + match function in scripts/init_db.sql if the new
 model's native dimension differs).
 
-The default model, nomic-embed-text-v1.5, REQUIRES task prefixes ("search_query:" /
-"search_document:") and supports Matryoshka truncation: its native 768-dim vector
-can be sliced to a smaller `EMBEDDING_DIM` and re-normalized with little quality
-loss. fastembed's `.embed()` does not add prefixes itself, so we prepend them here.
+The default model, BAAI/bge-small-en-v1.5, is 384-dim (light on a small worker
+dyno) and wants a query prefix but no document prefix. fastembed's `.embed()` does
+not add prefixes itself, so we prepend `EMBEDDING_QUERY_PREFIX` /
+`EMBEDDING_DOCUMENT_PREFIX` here. `_truncate` additionally supports Matryoshka
+models (e.g. nomic-embed-text) where a larger native vector is sliced to a smaller
+`EMBEDDING_DIM` and re-normalized; it is a no-op when `EMBEDDING_DIM` already
+matches the model's native dimension.
 """
 from __future__ import annotations
 

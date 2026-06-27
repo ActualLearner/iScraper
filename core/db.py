@@ -443,7 +443,8 @@ def claim_pending_jobs(limit: int = 10) -> list[dict]:
     GitHub can cancel a run at the workflow timeout, which prevents the process
     from marking its active job as error. A stale running job is safe to retry
     because scraping is idempotent and unchanged posts are skipped. Pending jobs
-    may also carry a retry timestamp when Gemini quota is temporarily exhausted.
+    may also carry a retry timestamp while a large embedding backlog is drained
+    across worker passes.
     """
     pending_rows = _rows(
         _execute(

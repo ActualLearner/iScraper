@@ -62,17 +62,21 @@ SUPABASE_DB_RETRY_JOB_MINUTES = _int("SUPABASE_DB_RETRY_JOB_MINUTES", 2)
 # RAM for the worker's lifetime, so keep the model + batch small enough to stay
 # under the dyno's memory cap. Swapping models is a config change here (plus a
 # vector(...) column change in scripts/init_db.sql if the native dim differs).
-EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "nomic-ai/nomic-embed-text-v1.5")
-# Dimension actually stored. Defaults to nomic's native 768. nomic supports
-# Matryoshka truncation (512/256/128) for smaller vectors; to use it, set this
-# lower AND change the vector(...) column + match function to match.
-EMBEDDING_DIM = _int("EMBEDDING_DIM", 768)
-# Task instruction prefixes prepended before embedding. nomic REQUIRES these.
-# For a model that needs none (e.g. all-MiniLM-L6-v2), set both to "" in code.
-# For bge-small-en-v1.5: query prefix
-# "Represent this sentence for searching relevant passages: ", document "".
-EMBEDDING_QUERY_PREFIX = _get("EMBEDDING_QUERY_PREFIX", "search_query: ") or ""
-EMBEDDING_DOCUMENT_PREFIX = _get("EMBEDDING_DOCUMENT_PREFIX", "search_document: ") or ""
+EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+# Dimension actually stored. bge-small-en-v1.5 is natively 384-dim, which is far
+# lighter on a small (512 MB) worker dyno than a 768-dim model. If you change
+# EMBEDDING_MODEL, set this to the new model's native dimension AND change the
+# vector(...) column + match function in scripts/init_db.sql to match.
+EMBEDDING_DIM = _int("EMBEDDING_DIM", 384)
+# Task instruction prefixes prepended before embedding. bge-small-en-v1.5 needs a
+# query prefix but no document prefix. For a model that needs none (e.g.
+# all-MiniLM-L6-v2) leave both empty; for nomic-embed-text use
+# "search_query: " / "search_document: ".
+EMBEDDING_QUERY_PREFIX = _get(
+    "EMBEDDING_QUERY_PREFIX",
+    "Represent this sentence for searching relevant passages: ",
+) or ""
+EMBEDDING_DOCUMENT_PREFIX = _get("EMBEDDING_DOCUMENT_PREFIX", "") or ""
 # Texts per fastembed batch — the main lever on peak RAM during backfill.
 EMBEDDING_BATCH = _int("EMBEDDING_BATCH", 16)
 # Unembedded posts pulled from the DB per page while backfilling. Bounds row
@@ -90,10 +94,11 @@ EMBEDDING_THREADS = _int("EMBEDDING_THREADS", 0)
 
 # --- Matching ---
 # Cosine similarity in [0, 1]; MUST be tuned for the embedding model in use since
-# v1 uses threshold-only relevance. This default is a starting point for
-# nomic-embed-text-v1.5 (whose relevant-pair similarities run lower than Gemini's);
-# measure against real matches and adjust before relying on it.
-SIMILARITY_THRESHOLD = _float("SIMILARITY_THRESHOLD", 0.55)
+# v1 uses threshold-only relevance. This default is a recall-leaning starting point
+# for bge-small-en-v1.5 (with the query prefix above, relevant-pair similarities
+# typically land ~0.5-0.8). Measure against real matches and raise it if results
+# are noisy, lower it if you see false negatives.
+SIMILARITY_THRESHOLD = _float("SIMILARITY_THRESHOLD", 0.45)
 
 # --- OCR ---
 OCR_ENABLED = _bool("OCR_ENABLED", True)
@@ -111,6 +116,11 @@ OCR_THREAD_LIMIT = _int("OCR_THREAD_LIMIT", 1)
 
 # --- Worker runtime ---
 PAST_SEARCH_JOBS_PER_RUN = _int("PAST_SEARCH_JOBS_PER_RUN", 1)
+# Max posts a single Past Search pass will embed before it matches/delivers what is
+# ready and defers the rest to the next worker run. Bounds per-pass runtime on a
+# small dyno and lets matches stream out incrementally instead of waiting for the
+# whole backlog. 0 means embed the entire backlog in one pass.
+PAST_SEARCH_EMBED_PER_RUN = _int("PAST_SEARCH_EMBED_PER_RUN", 2000)
 WORKER_RUN_TIMEOUT_SECONDS = _float("WORKER_RUN_TIMEOUT_SECONDS", 0.0)
 WORKER_STAGE_TIMEOUT_SECONDS = _float("WORKER_STAGE_TIMEOUT_SECONDS", 0.0)
 WORKER_LOOP_INTERVAL_SECONDS = _float("WORKER_LOOP_INTERVAL_SECONDS", 300.0)
