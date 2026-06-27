@@ -58,7 +58,7 @@ Telegram Bot API
 Vercel Python webhook  <---->  Supabase Postgres + pgvector
       ^                                ^
       |                                |
-      |                         GitHub Actions worker
+      |                          Heroku worker dyno
       |                                |
       +------------------------- delivers matches
                                        |
@@ -69,7 +69,7 @@ Vercel Python webhook  <---->  Supabase Postgres + pgvector
 The system is split into three deployable surfaces:
 
 - `api/` and `bot/` handle the interactive Telegram bot on Vercel.
-- `scraper/` and `jobs/` run as a scheduled GitHub Actions worker.
+- `scraper/` and `jobs/` run as a long-running Heroku worker dyno (`scripts/worker_loop.py`).
 - `core/` contains shared configuration, database access, Telegram API helpers, OCR, embeddings, parsing, and time utilities.
 
 Supabase is the single source of truth for users, source lists, conversation state, scraped posts, match records, and queued jobs.
@@ -88,7 +88,7 @@ The current beta uses threshold-only semantic matching. This keeps the system si
 
 ## Current Limits
 
-- Near-Live is polling-based, not instant. The worker is scheduled through GitHub Actions, so runs may be delayed.
+- Near-Live is polling-based, not instant. The worker runs as a Heroku worker dyno on a short loop (`WORKER_LOOP_INTERVAL_SECONDS`), so runs may be delayed.
 - Public channels and public supergroups are supported. Private sources are not.
 - Past Search is queued. It is processed by worker runs, not immediately by the webhook.
 - Large Past Searches may take multiple worker runs while posts are indexed. There are no embedding rate limits, but a run can be interrupted (or the dyno restarted) and the still-unindexed posts resume on the next pass.
