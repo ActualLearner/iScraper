@@ -542,7 +542,7 @@ def _show_search_status(chat_id: int, user_id: int) -> None:
         done = progress.get("sources_done")
         total = progress.get("sources_total")
         if source or total is not None:
-            lines.append(f"Sources: {done or 0}/{total or '?'}" + (f" (@{source})" if source else ""))
+            lines.append(f"Channels: {done or 0}/{total or '?'}" + (f" (@{source})" if source else ""))
         scraped = progress.get("posts_written")
         if scraped is not None:
             lines.append(f"New/updated posts: {scraped}")

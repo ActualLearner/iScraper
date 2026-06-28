@@ -117,7 +117,7 @@ WORKER_LOOP_INTERVAL_SECONDS = _float("WORKER_LOOP_INTERVAL_SECONDS", 300.0)
 
 # --- Limits / defaults (from product-spec.md) ---
 BETA_MAX_USERS = _int("BETA_MAX_USERS", 5)
-MAX_MATCH_PROFILE_WORDS = _int("MAX_MATCH_PROFILE_WORDS", 35)
+MAX_MATCH_PROFILE_WORDS = _int("MAX_MATCH_PROFILE_WORDS", 500)
 MAX_SOURCE_CHANNELS = _int("MAX_SOURCE_CHANNELS", 30)
 
 # 0 means scrape until the lookback boundary. Set only as an emergency brake for

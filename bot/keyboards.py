@@ -22,7 +22,7 @@ def add_more_or_done() -> dict:
 def main_menu() -> dict:
     return _kb(
         [
-            [("📝 Match profile", "menu:profile"), ("📡 Sources", "menu:channels")],
+            [("📝 Match profile", "menu:profile"), ("📡 Channels", "menu:channels")],
             [("📬 Delivery", "menu:delivery"), ("🌍 Timezone", "menu:tz")],
         ]
     )
